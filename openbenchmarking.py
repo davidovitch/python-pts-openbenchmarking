@@ -12,6 +12,7 @@ from lxml.html import fromstring
 from lxml import etree
 import urllib.request
 
+from tqdm import tqdm
 import pandas as pd
 
 
@@ -141,9 +142,11 @@ class xml2df:
         self.load(io)
 
         df_sys = self.generated_system2df()
-        df_sys.rename(columns={'Identifier':'SystemIdentifier'}, inplace=True)
+        df_sys.rename(columns={'Description':'SystemDescription',
+                               'Identifier':'SystemIdentifier'}, inplace=True)
         df_res = self.data_entry2df()
-        df_sys.rename(columns={'Identifier':'ResultIdentifier'}, inplace=True)
+        df_sys.rename(columns={'Description':'ResultDescription',
+                               'Identifier':'ResultIdentifier'}, inplace=True)
 
         df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
 
@@ -237,7 +240,7 @@ class xml2df:
         system = ['Identifier', 'Hardware', 'Software', 'User', 'TimeStamp',
                   'TestClientVersion', 'Notes', 'JSON']
         hardware = ['Processor', 'Motherboard', 'Chipset', 'Memory', 'Disk',
-                    'Graphics', 'Audio', 'Network']
+                    'Graphics', 'Audio', 'Network', 'Monitor']
         software = ['OS', 'Kernel', 'Desktop', 'Display Server',
                     'Display Driver', 'OpenGL', 'OpenCL', 'Vulkan', 'Compiler',
                     'File-System', 'Screen Resolution']
@@ -506,10 +509,10 @@ def dostuff():
         f.write(etree.tostring(root).decode())
 
 
-def get_all_profiles():
+def get_all_profiles(hardware_string):
 
-    url = 'http://openbenchmarking.org/s/AMD%20Radeon%20RX%20470&show_more'
-    response = urllib.request.urlopen(url)
+    url = 'http://openbenchmarking.org/s/{}&show_more'.format(hardware_string)
+    response = urllib.request.urlopen(urllib.parse.quote(url, safe='/:'))
     data = response.read()      # a `bytes` object
     text = data.decode('utf-8') # a `str`; this step can't be used if data is binary
 
@@ -520,17 +523,30 @@ def get_all_profiles():
     # url starts with /result/
     ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
 
+    return ids
+
 
 if __name__ == '__main__':
 
-    obm = xml2df()
-    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
-
+#    obm = xml2df()
+#    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
 #    obm.load(io)
 #    df_sys = obm.generated_system2df()
 #    df_res = obm.data_entry2df()
 
-    df = obm.convert(io)
+#    obm = xml2df()
+#    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
+#    df = obm.convert(io)
+
+    df = pd.DataFrame()
+    obm = xml2df()
+#    testids = get_all_profiles('RX 470')
+    for testid in tqdm(testids):
+#        print(testid)
+        io = obm.url_base.format(testid)
+        df = df.append(obm.convert(io))
+
+    df.to_hdf(pjoin(obm.flocal, 'search_rx_470.h5'), 'table')
 
 # Generated
 
