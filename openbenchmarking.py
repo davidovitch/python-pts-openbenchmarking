@@ -153,7 +153,8 @@ class xml2df:
         elements = string.split(', ')
         return {k.split(':')[0]:k.split(':')[1] for k in elements}
 
-    def _add2row(self, elements, columns, df_dict, missing_val=None):
+    def _add2row(self, elements, columns, df_dict, missing_val=None,
+                 rename={}):
         """
 
         Elements with the tag Hardware and Software are split into multiple
@@ -172,7 +173,8 @@ class xml2df:
 
         missing_val : str, default=None
             When an tag occurs in columns but not in elements, it is added to
-            df_dict with missing_val as value.
+            df_dict with missing_val as value. Rename is applied after the
+            missing keys from columns are checked
 
         Returns
         ------
@@ -203,6 +205,10 @@ class xml2df:
         # populate missing keys with an empty value
         for key in columns - set(found_els):
             df_dict[key].append(missing_val)
+
+        for key, value in rename.items():
+            df_dict[value] = df_dict[key]
+            df_dict.pop(key)
 
         return df_dict
 
@@ -237,7 +243,6 @@ class xml2df:
 #        software_set = set(software)
 
         dict_sys = {k:[] for k in cols_sys}
-        dict_gen = {k:[] for k in generated}
 
 #        els_generated = self.root.findall('Generated')
 #        dict_sys = self._add2row(els_generated, generated_set, dict_sys)
@@ -276,27 +281,55 @@ class xml2df:
         for key, value in dict_gen.items():
             dict_sys[key] = [value]*len(systems)
 
-        for key, value in dict_sys.items():
-            print(key.rjust(28), len(value))
+#        for key, value in dict_sys.items():
+#            print(key.rjust(28), len(value))
 
         # the indices for Identifier in Results/Data/Entry
         ids = {key:i for i,key in enumerate(dict_sys['Identifier'])}
 
         return pd.DataFrame(dict_sys)
 
-    def date_entry2df(self):
+    def data_entry2df(self):
 
         result = ["Identifier", "Title", "AppVersion", "Arguments",
                   "Description", "Scale", "Proportion", "DisplayFormat"]
-        data_entry = ["Label", "Value", "RawString", "JSON"]
+        data_entry = ["Identifier", "Value", "RawString", "JSON"]
+        data_set = set(data_entry)
+        rename = {'Identifier':'SystemIdentifier'}
 
         dict_res = {k:[] for k in result+data_entry}
 
         res_elements = list(self.root.findall('Result'))
 
-        for el in res_elements:
-            for entry in el.find('Data').getchildren():
-                identifier = entry.find('Identifier')
+        for res_el in res_elements:
+            # get all the details of the test in question
+            res_id = {k.tag:k.text for k in res_el}
+            res_id.pop('Data')
+            data_entries = res_el.find('Data')
+#            # add each result to the collection
+#            for entry in data_entries:
+#                # start with empty but with all required keys dict
+#                row = {k:None for k in data_entry}
+#                # update with all tags found in the xml element
+#                row.update({k.tag:k.text for k in entry})
+#                # Identifier is used in both Result and Data, rename to
+#                # SystemIdentifier, and remove Identifier
+#                row['SystemIdentifier'] = row['Identifier']
+#                row.pop('Identifier')
+#            for key, value in row:
+#                dict_res[key].append(value)
+            # add each result to the collection
+            tmp = {k:[] for k in data_entry}
+            for entry in data_entries:
+                tmp = self._add2row(entry, data_set, tmp, rename=rename)
+            # and add the Result element columns to all the data entries
+            for key, value in res_id.items():
+                dict_res[key].extend([value]*len(data_entries))
+
+        for key, value in dict_res.items():
+            print(key.rjust(28), len(value))
+
+        return pd.DataFrame(dict_res)
 
 
 def dostuff():
@@ -469,8 +502,9 @@ if __name__ == '__main__':
 
     obm = xml2df()
     obm.load(pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml"))
-#    self = obm
+    self = obm
     df_sys = obm.generated_system2df()
+    df_res = obm.data_entry2df()
 
 # Generated
 
