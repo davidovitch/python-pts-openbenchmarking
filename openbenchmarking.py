@@ -5,15 +5,10 @@ Created on Sun Nov 27 13:03:26 2016
 @author: davidovitch
 """
 
-#import urllib2
-#response = urllib2.urlopen('http://www.example.com/')
-#html = response.read()
-
 import os
 from os.path import join as pjoin
 
 from lxml.html import fromstring
-#from lxml import objectify
 from lxml import etree
 import urllib.request
 
@@ -135,11 +130,24 @@ class EditXML:
 
 class xml2df:
 
-    def __init__(self):
+    def __init__(self, io=None):
         self.flocal = os.path.join(os.environ['HOME'],
                                    '.phoronix-test-suite/test-results/')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.hard_soft_tags = set(['Hardware', 'Software'])
+
+    def convert(self, io):
+
+        self.load(io)
+
+        df_sys = self.generated_system2df()
+        df_sys.rename(columns={'Identifier':'SystemIdentifier'}, inplace=True)
+        df_res = self.data_entry2df()
+        df_sys.rename(columns={'Identifier':'ResultIdentifier'}, inplace=True)
+
+        df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
+
+        return df
 
     def load(self, io):
         tree = etree.parse(io)
@@ -206,6 +214,7 @@ class xml2df:
         for key in columns - set(found_els):
             df_dict[key].append(missing_val)
 
+        # rename a certain column
         for key, value in rename.items():
             df_dict[value] = df_dict[key]
             df_dict.pop(key)
@@ -222,11 +231,11 @@ class xml2df:
         joining tables time and again when searching/selecting.
         """
 
-        generated = ["Title", "LastModified", "TestClient", "Description",
-                     "Notes", "InternalTags", "ReferenceID",
-                     "PreSetEnvironmentVariables", 'XXX']
-        system = ["Identifier", "Hardware", "Software", "User", "TimeStamp",
-                  "TestClientVersion", "Notes", "JSON"]
+        generated = ['Title', 'LastModified', 'TestClient', 'Description',
+                     'Notes', 'InternalTags', 'ReferenceID',
+                     'PreSetEnvironmentVariables']
+        system = ['Identifier', 'Hardware', 'Software', 'User', 'TimeStamp',
+                  'TestClientVersion', 'Notes', 'JSON']
         hardware = ['Processor', 'Motherboard', 'Chipset', 'Memory', 'Disk',
                     'Graphics', 'Audio', 'Network']
         software = ['OS', 'Kernel', 'Desktop', 'Display Server',
@@ -285,19 +294,20 @@ class xml2df:
 #            print(key.rjust(28), len(value))
 
         # the indices for Identifier in Results/Data/Entry
-        ids = {key:i for i,key in enumerate(dict_sys['Identifier'])}
+        self.ids = {key:i for i,key in enumerate(dict_sys['Identifier'])}
 
         return pd.DataFrame(dict_sys)
 
     def data_entry2df(self):
 
-        result = ["Identifier", "Title", "AppVersion", "Arguments",
-                  "Description", "Scale", "Proportion", "DisplayFormat"]
-        data_entry = ["Identifier", "Value", "RawString", "JSON"]
+        result = ['Identifier', 'Title', 'AppVersion', 'Arguments',
+                  'Description', 'Scale', 'Proportion', 'DisplayFormat']
+        data_entry = ['Identifier', 'Value', 'RawString', 'JSON']
+        data_entry_ = ['SystemIdentifier', 'Value', 'RawString', 'JSON']
         data_set = set(data_entry)
         rename = {'Identifier':'SystemIdentifier'}
 
-        dict_res = {k:[] for k in result+data_entry}
+        dict_res = {k:[] for k in result+data_entry_}
 
         res_elements = list(self.root.findall('Result'))
 
@@ -321,13 +331,26 @@ class xml2df:
             # add each result to the collection
             tmp = {k:[] for k in data_entry}
             for entry in data_entries:
-                tmp = self._add2row(entry, data_set, tmp, rename=rename)
+                tmp = self._add2row(entry, data_set, tmp)
+            # before merging, rename Identifier
+            for key, value in rename.items():
+                tmp[value] = tmp[key]
+                tmp.pop(key)
+            # add with the rest
+            for key, value in tmp.items():
+                dict_res[key].extend(value)
             # and add the Result element columns to all the data entries
             for key, value in res_id.items():
                 dict_res[key].extend([value]*len(data_entries))
 
-        for key, value in dict_res.items():
-            print(key.rjust(28), len(value))
+        # also add the index of the System as a column because the
+        # SystemIdentifier is not unique!
+        dict_res['SystemIndex'] = []
+        for identifier in dict_res['SystemIdentifier']:
+            dict_res['SystemIndex'].append(self.ids[identifier])
+
+#        for key, value in dict_res.items():
+#            print(key.rjust(28), len(value))
 
         return pd.DataFrame(dict_res)
 
@@ -482,6 +505,7 @@ def dostuff():
     with open(fname, 'w') as f:
         f.write(etree.tostring(root).decode())
 
+
 def get_all_profiles():
 
     url = 'http://openbenchmarking.org/s/AMD%20Radeon%20RX%20470&show_more'
@@ -497,14 +521,16 @@ def get_all_profiles():
     ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
 
 
-
 if __name__ == '__main__':
 
     obm = xml2df()
-    obm.load(pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml"))
-    self = obm
-    df_sys = obm.generated_system2df()
-    df_res = obm.data_entry2df()
+    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
+
+#    obm.load(io)
+#    df_sys = obm.generated_system2df()
+#    df_res = obm.data_entry2df()
+
+    df = obm.convert(io)
 
 # Generated
 
