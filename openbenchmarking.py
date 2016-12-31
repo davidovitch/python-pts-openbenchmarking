@@ -15,14 +15,42 @@ import urllib.request
 from tqdm import tqdm
 import pandas as pd
 
-
-class EditXML:
+class OpenBenchMarking:
 
     def __init__(self):
         self.flocal = pjoin(os.environ['HOME'],
                             '.phoronix-test-suite/test-results/')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.hard_soft_tags = set(['Hardware', 'Software'])
+
+    def load(self, io):
+
+        tree = etree.parse(io)
+        self.root = tree.getroot()
+        self.io = io
+
+    def get_all_profiles(self, search_string):
+        """Return a list of test profile id's
+        """
+
+        url = 'http://openbenchmarking.org/s/{}&show_more'.format(search_string)
+        response = urllib.request.urlopen(urllib.parse.quote(url, safe='/:'))
+        data = response.read()      # a bytes object
+        text = data.decode('utf-8') # str; can't be used if data is binary
+
+        tree = fromstring(text)
+        # all profiles names are in h4 elements, and nothing else is, nice and easy
+        # but if a title is given, the id is in the parent link
+        # url starts with /result/
+        ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
+
+        return ids
+
+
+class EditXML(OpenBenchMarking):
+
+    def __init__(self):
+        super().__init__()
 
     def merge(self, list_test_results):
         """DOESN'T MERGE ANYTHING YET
@@ -32,12 +60,6 @@ class EditXML:
             fpath = os.path.join(self.flocal, test_result, 'composite.xml')
             tree = etree.parse(fpath)
             root = tree.getroot()
-
-    def load(self, io):
-
-        tree = etree.parse(io)
-        self.root = tree.getroot()
-        self.io = io
 
     def write_local(self, test_result=None):
         if test_result is None:
@@ -129,13 +151,10 @@ class EditXML:
                 identifier.text = id_rename[identifier.text]
 
 
-class xml2df:
+class xml2df(OpenBenchMarking):
 
-    def __init__(self, io=None):
-        self.flocal = os.path.join(os.environ['HOME'],
-                                   '.phoronix-test-suite/test-results/')
-        self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
-        self.hard_soft_tags = set(['Hardware', 'Software'])
+#    def __init__(self):
+#        super().__init__()
 
     def convert(self, io):
 
@@ -151,11 +170,6 @@ class xml2df:
         df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
 
         return df
-
-    def load(self, io):
-        tree = etree.parse(io)
-        self.root = tree.getroot()
-        self.io = io
 
     def _split2dict(self, string):
         """Convert following string to dictionary:
@@ -358,7 +372,10 @@ class xml2df:
         return pd.DataFrame(dict_res)
 
 
-def dostuff():
+def example_xml():
+    """Manually select a bunch of cases and select only those systems and
+    resuls that are of importance.
+    """
 
     search_hardware = 'RX 480'
     search_descr = '1920 x 1080'
@@ -367,7 +384,7 @@ def dostuff():
 #    for test_result in cases:
 #        print('='*10, test_result)
 #        obm = EditXML()
-#        obm.load(test_result)
+#        obm.load(obm.url_base.format(test_result))
 #        id_rename = obm.remove(search_tests, search_hardware, search_descr)
 #        obm.cleanup(id_rename)
 #        obm.write_local()
@@ -409,7 +426,8 @@ def dostuff():
     # load all from the same source
 #    search_tests = 'unigine-heaven'
 #    obm = EditXML()
-#    obm.load(','.join(cases))
+#    url = obm.url_base.format(','.join(cases))
+#    obm.load(url)
 #    id_rename = obm.remove(search_tests, search_hardware, search_descr)
 #    obm.cleanup(id_rename)
 #    obm.write_local(test_result='{}-rx-480-1920x1080'.format(search_tests))
@@ -422,7 +440,8 @@ def dostuff():
     # load all from the same source
 #    search_tests = 'unigine-tropics'
 #    obm = EditXML()
-#    obm.load(','.join(cases))
+#    url = obm.url_base.format(','.join(cases))
+#    obm.load(url)
 #    id_rename = obm.remove(search_tests, search_hardware, search_descr)
 #    obm.cleanup(id_rename)
 #    obm.write_local(test_result='{}-rx-480-1920x1080'.format(search_tests))
@@ -462,7 +481,8 @@ def dostuff():
             '1608238-HA-UNIGINEVA24']
 #    search_tests = 'unigine-valley'
 #    obm = EditXML()
-#    obm.load(','.join(cases))
+#    url = obm.url_base.format(','.join(cases))
+#    obm.load(url)
 #    id_rename = obm.remove(search_tests, search_hardware, search_descr)
 #    obm.cleanup(id_rename)
 #    obm.write_local(test_result='{}-rx-480-1920x1080'.format(search_tests))
@@ -474,7 +494,8 @@ def dostuff():
             '1607125-HA-SANTUARY143']
 #    search_tests = 'unigine-sanctuary'
 #    obm = EditXML()
-#    obm.load(','.join(cases))
+#    url = obm.url_base.format(','.join(cases))
+#    obm.load(url)
 #    id_rename = obm.remove(search_tests, search_hardware, search_descr)
 #    obm.cleanup(id_rename)
 #    obm.write_local(test_result='{}-rx-480-1920x1080'.format(search_tests))
@@ -490,43 +511,27 @@ def dostuff():
     obm.cleanup(id_rename)
     obm.write_local(test_result='{}-rx-480-1920x1080'.format('unigine-all'))
 
-    # ========================================
-    testname = 'unigine-heaven-rx-480'
-    fname = pjoin(obm.flocal, testname, 'composite-original.xml')
-    with open(fname, 'w') as f:
-        f.write(text)
 
-    response = urllib.request.urlopen(url)
-    data = response.read()      # a `bytes` object
-    text = data.decode('utf-8') # a `str`; this step can't be used if data is binary
-    #xml = objectify.fromstring(text)
-    #root = etree.fromstring(text)
-    #tree = etree.parse(url)
-    #root = tree.getroot()
+def example_dataframe():
 
-    fname = pjoin(obm.flocal, testname, 'composite.xml')
-    with open(fname, 'w') as f:
-        f.write(etree.tostring(root).decode())
+    df = pd.DataFrame()
+    xml = xml2df()
+    # get a list of test result id's from using the search function on obm.org
+    testids = xml.get_all_profiles('RX 470')
+    for testid in tqdm(testids):
+#        print(testid)
+        # download each result xml file and convert to df
+        io = xml.url_base.format(testid)
+        # save in one big dataframe
+        df = df.append(xml.convert(io))
 
-
-def get_all_profiles(hardware_string):
-
-    url = 'http://openbenchmarking.org/s/{}&show_more'.format(hardware_string)
-    response = urllib.request.urlopen(urllib.parse.quote(url, safe='/:'))
-    data = response.read()      # a `bytes` object
-    text = data.decode('utf-8') # a `str`; this step can't be used if data is binary
-
-    tree = fromstring(text)
-    # all profiles names are in h4 elements, and nothing else is, nice and easy
-    # but if a title is given, the id is in the parent link
-#    cases = [k.text for k in tree.cssselect('h4')]
-    # url starts with /result/
-    ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
-
-    return ids
+    df.to_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
 
 
 if __name__ == '__main__':
+
+    dummy = None
 
 #    obm = xml2df()
 #    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
@@ -537,25 +542,3 @@ if __name__ == '__main__':
 #    obm = xml2df()
 #    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
 #    df = obm.convert(io)
-
-    df = pd.DataFrame()
-    obm = xml2df()
-#    testids = get_all_profiles('RX 470')
-    for testid in tqdm(testids):
-#        print(testid)
-        io = obm.url_base.format(testid)
-        df = df.append(obm.convert(io))
-
-    df.to_hdf(pjoin(obm.flocal, 'search_rx_470.h5'), 'table')
-
-# Generated
-
-# System
-# System.Identifier
-
-# Result
-# Result.Identifier: test ID
-# Result.Identifier.Data.Entry
-# Result.Identifier.Data.Entry.Identifier
-# Result.Identifier.Data.Entry.Value
-# Result.Identifier.Data.Entry.Rawstring (: seperated)
