@@ -13,6 +13,7 @@ from lxml import etree
 import urllib.request
 
 from tqdm import tqdm
+import numpy as np
 import pandas as pd
 
 class OpenBenchMarking:
@@ -22,6 +23,19 @@ class OpenBenchMarking:
                             '.phoronix-test-suite/test-results/')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.hard_soft_tags = set(['Hardware', 'Software'])
+        self.testid = 'unknown'
+
+    def load_testid(self, testid):
+        """
+
+        Parameters
+        ----------
+
+        testid : str
+            OpenBenchemarking.org testid, for example: 1606281-HA-RX480LINU80
+        """
+        self.testid = testid
+        self.load(self.url_base.format(testid))
 
     def load(self, io):
 
@@ -153,21 +167,37 @@ class EditXML(OpenBenchMarking):
 
 class xml2df(OpenBenchMarking):
 
-#    def __init__(self):
-#        super().__init__()
+    def __init__(self, io=None, testid=None):
+        super().__init__()
 
-    def convert(self, io):
+        if io is not None:
+            self.load(io)
+        elif testid is not None:
+            self.load_testid(testid)
 
-        self.load(io)
+    def convert(self):
 
         df_sys = self.generated_system2df()
         df_sys.rename(columns={'Description':'SystemDescription',
-                               'Identifier':'SystemIdentifier'}, inplace=True)
+                               'Identifier':'SystemIdentifier',
+                               'JSON':'SystemJSON',
+                               'Title':'GeneratedTitle'}, inplace=True)
         df_res = self.data_entry2df()
-        df_sys.rename(columns={'Description':'ResultDescription',
-                               'Identifier':'ResultIdentifier'}, inplace=True)
+        df_res.rename(columns={'Description':'ResultDescription',
+                               'Identifier':'ResultIdentifier',
+                               'JSON':'DataEntryJSON',
+                               'Title':'ResultTitle'}, inplace=True)
+        # drop the SystemIdentifier column since it is already part of df_sys
+        df_res.drop('SystemIdentifier', inplace=True, axis=1)
 
         df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
+        # after merging both, SystemIndex is now obsolete
+        df.drop('SystemIndex', inplace=True, axis=1)
+
+        # convert object columns to string, but leave other data types as is
+        for col, dtype in df.dtypes.items():
+            if isinstance(dtype, object):
+                df[col] = df[col].values.astype(np.str)
 
         return df
 
@@ -239,13 +269,16 @@ class xml2df(OpenBenchMarking):
         return df_dict
 
     def generated_system2df(self):
-        """Convert to Pandas DataFrame. We will split all the data into two
-        tables:
-            * Generated + System
-            * Result + Data + Entry
+        """For a given xml result file from pts/OpenBenchmarking.org, convert
+        the Generated and System tags to a Pandas DataFrame. This means that
+        the data contained in the Generated tag will now be repeated for each
+        of the systems contained in the System tag.
 
-        This will result in duplicated data among different rows, but it avoids
-        joining tables time and again when searching/selecting.
+        Now we duplicated data among different rows, which helps when
+        searching/selecting.
+
+        The Hardware and Software tags are split into multiple columns to
+        facilitate a more fine grained searching and selection process.
         """
 
         generated = ['Title', 'LastModified', 'TestClient', 'Description',
@@ -290,6 +323,9 @@ class xml2df(OpenBenchMarking):
         # add empty values for possible missing keys
         for key in generated_set - set(dict_gen.keys()):
             dict_gen[key] = None
+        # also include the URL testid identifier which is unique for each
+        # test entry on OpenBenchmarking.org
+        dict_gen['testid'] = self.testid
 
         # For each system create a row in the df_dict
         systems = self.root.findall('System')
@@ -316,6 +352,11 @@ class xml2df(OpenBenchMarking):
         return pd.DataFrame(dict_sys)
 
     def data_entry2df(self):
+        """For a given xml result file from pts/OpenBenchmarking.org, convert
+        the Result tags to a Pandas DataFrame. This means that the data
+        contained in the Result tag will now be replicated for each of the
+        Data/Entry tags for that given test result.
+        """
 
         result = ['Identifier', 'Title', 'AppVersion', 'Arguments',
                   'Description', 'Scale', 'Proportion', 'DisplayFormat']
@@ -360,8 +401,8 @@ class xml2df(OpenBenchMarking):
             for key, value in res_id.items():
                 dict_res[key].extend([value]*len(data_entries))
 
-        # also add the index of the System as a column because the
-        # SystemIdentifier is not unique!
+        # add the index of the System as a column because SystemIdentifier is
+        # not unique! Will be used when merging/joining with Generated/system
         dict_res['SystemIndex'] = []
         for identifier in dict_res['SystemIdentifier']:
             dict_res['SystemIndex'].append(self.ids[identifier])
@@ -521,12 +562,48 @@ def example_dataframe():
     for testid in tqdm(testids):
 #        print(testid)
         # download each result xml file and convert to df
-        io = xml.url_base.format(testid)
+        xml.load_testid(testid)
         # save in one big dataframe
-        df = df.append(xml.convert(io))
+        df = df.append(xml.convert())
+    # create a new unique index
+    df.index = np.arange(len(df))
 
+    # save the DataFrame
     df.to_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
-    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
+#    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
+
+    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+
+    # -------------------------------------------------------------------------
+    # select only subset of data, and plot
+    # only R470 graphic cards
+    res_find = df['Graphics'].str.lower().str.find('rx 470')
+    # grp_lwr holds -1 for entries that do not contain the search string
+    # we are only interested in taking the indeces of those entries that do
+    # contain our search term, so antyhing above -1
+    isel = res_find[res_find > -1].index
+    df_sel = df.loc[isel]
+
+    # -------------------------------------------------------------------------
+    # select only a certain test
+    tests = df_sel['ResultIdentifier'].unique().astype(np.str)
+    df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/unigine-valley-1.1.4']
+
+    len(df_sel['Graphics'].unique())
+
+    df_sel['Screen Resolution'].unique()
+
+    for resolution, gr in df_sel.groupby('Screen Resolution'):
+
+
+    # -------------------------------------------------------------------------
+
+
+#    pp=df[:10]
+#    grp_lwr = pp['Scale'].str.lower().str.find('watts')
+#    isel = grp_lwr[grp_lwr > -1].index
+#    pp['Scale'].loc[isel]
+
 
 
 if __name__ == '__main__':
