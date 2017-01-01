@@ -16,6 +16,9 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 
+from matplotlib import pyplot as plt
+
+
 class OpenBenchMarking:
 
     def __init__(self):
@@ -568,6 +571,20 @@ def example_dataframe():
     # create a new unique index
     df.index = np.arange(len(df))
 
+    # there are probably going to be more duplicates
+    df.drop_duplicates(inplace=True)
+    # columns that can hold different values but still could refer to the same
+    # test data. So basically all user defined columns should be ignored.
+    ignore_cols = ['User', 'SystemDescription', 'testid', 'LastModified',
+                   'SystemIdentifier', 'GeneratedTitle'] # Notes
+    cols = list(set(df.columns) - set(ignore_cols))
+    # mark True for values that are NOT duplicates
+    df = df.loc[np.invert(df.duplicated(subset=cols).values)]
+
+    # TODO: Value can also be a time series of measurements
+    # convert mean values from float to text
+#    df['Value'] = df['Value'].values.astype(np.float64)
+
     # save the DataFrame
     df.to_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
 #    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
@@ -581,29 +598,65 @@ def example_dataframe():
     # grp_lwr holds -1 for entries that do not contain the search string
     # we are only interested in taking the indeces of those entries that do
     # contain our search term, so antyhing above -1
-    isel = res_find[res_find > -1].index
-    df_sel = df.loc[isel]
+#    isel = res_find[res_find > -1].index
+    df_sel = df.loc[(res_find > -1).values]
+    # select only a certain test
+    df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/unigine-valley-1.1.4']
+
+    # and the same version/resultion of said test
+    seltext = 'Resolution: 1920 x 1080 - Mode: Fullscreen'
+    sel = df_sel[df_sel['ResultDescription']==seltext].copy()
+    # cast Value to a float64
+    sel['Value'] = sel['Value'].astype(np.float64)
+    # remove close to zero measurements
+    sel = sel[(sel['Display Driver']!='None') &
+              (sel['Value']>0.5)]
+
+    # now we need to pivot the table into a different form:
+    # each column is a different hardware/software combination, and each row
+    # is another different variable (test/hardware/software)
+
 
     # -------------------------------------------------------------------------
-    # select only a certain test
-    tests = df_sel['ResultIdentifier'].unique().astype(np.str)
-    df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/unigine-valley-1.1.4']
+    # PLOTTING
+#    ax = sel['Value'].plot.barh()
+    fig, ax = plt.subplots(figsize=(12,12))
+    yticks = np.linspace(0, 10, num=len(sel))
+    height = (yticks[1] - yticks[0])*0.8
+    ax.barh(yticks, sel['Value'].values, align='center', height=height)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(sel['Processor'].values.astype(str))
+    ax.set_ylim(-height/2, 10 + height/2)
+    fig.tight_layout()
+
+#    fig, ax = plt.subplots()
+#    ax.barh(np.arange(5), [9,9,10,11,12], align='center')
+#    ax.set_yticklabels(list('abcde'))
+
+    # -------------------------------------------------------------------------
+
+    # remove all doubles
 
     len(df_sel['Graphics'].unique())
 
     df_sel['Screen Resolution'].unique()
+    df_sel['ResultDescription'].unique()
 
-    for resolution, gr in df_sel.groupby('Screen Resolution'):
-
-
-    # -------------------------------------------------------------------------
-
+    for resolution, gr in df_sel.groupby('ResultDescription'):
+        print(len(gr['Graphics'].unique()), len(gr['Processor'].unique()),
+              resolution)
+        plt.figure(resolution)
+        plt.plot()
+        for col in gr:
+            if len(gr[col].unique()) !=1:
+                print('='*10, col)
+                print(gr[col].unique())
+            print(col, len(gr[col].unique()))
 
 #    pp=df[:10]
 #    grp_lwr = pp['Scale'].str.lower().str.find('watts')
 #    isel = grp_lwr[grp_lwr > -1].index
 #    pp['Scale'].loc[isel]
-
 
 
 if __name__ == '__main__':
