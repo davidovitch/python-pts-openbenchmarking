@@ -22,8 +22,8 @@ from matplotlib import pyplot as plt
 class OpenBenchMarking:
 
     def __init__(self):
-        self.flocal = pjoin(os.environ['HOME'],
-                            '.phoronix-test-suite/test-results/')
+        self.pts_local = pjoin(os.environ['HOME'],
+                               '.phoronix-test-suite/test-results/')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.hard_soft_tags = set(['Hardware', 'Software'])
         self.testid = 'unknown'
@@ -76,14 +76,14 @@ class EditXML(OpenBenchMarking):
         """
         self.root = etree.Element('PhoronixTestSuite')
         for test_result in list_test_results:
-            fpath = os.path.join(self.flocal, test_result, 'composite.xml')
+            fpath = os.path.join(self.pts_local, test_result, 'composite.xml')
             tree = etree.parse(fpath)
             root = tree.getroot()
 
     def write_local(self, test_result=None):
         if test_result is None:
             test_result = self.test_result
-        fpath = os.path.join(self.flocal, test_result)
+        fpath = os.path.join(self.pts_local, test_result)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
         fname = os.path.join(fpath, 'composite.xml')
@@ -451,8 +451,8 @@ def download_from_openbm(search_string):
 #    df['Value'] = df['Value'].values.astype(np.float64)
 
     # save the DataFrame
-    df.to_hdf(pjoin(xml.flocal, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
+#    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
+#    df.to_excel(pjoin(xml.pts_local, 'search_rx_470.xlsx'))
 
     return df
 
@@ -536,7 +536,7 @@ def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
         yticklabels_center.append(grname)
         y0 += (len(gr) + gr_spacing)
 
-    ax.set_ylim(-tick_height/2, yticks[-1] + tick_height/2)
+    ax.set_ylim(-tick_height, yticks[-1] + tick_height)
     ax.set_yticks(yticks_center)
     ax.set_yticklabels(yticklabels_center)
     fig.tight_layout()
@@ -688,7 +688,7 @@ def example1_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
 
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
@@ -734,7 +734,7 @@ def example2_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
 
@@ -779,7 +779,7 @@ def example3_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
 
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
@@ -798,7 +798,7 @@ def example3_dataframe():
     df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/xonotic-1.4.0']
 
     # and the same version/resultion of said test
-    seltext = 'Resolution: 1920 x 1080 - Effects Quality: Ultimate'
+    seltext = 'Resolution: 3840 x 2160 - Effects Quality: Ultimate'
     sel = df_sel[df_sel['ResultDescription']==seltext].copy()
     # cast Value to a float64
     sel['Value'] = sel['Value'].astype(np.float64)
@@ -821,11 +821,11 @@ if __name__ == '__main__':
 #    df = download_from_openbm('RX 480')
 
 #    obm = xml2df()
-#    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
+#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
 #    obm.load(io)
 #    df_sys = obm.generated_system2df()
 #    df_res = obm.data_entry2df()
 
 #    obm = xml2df()
-#    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
+#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
 #    df = obm.convert(io)
