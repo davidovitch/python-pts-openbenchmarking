@@ -27,6 +27,8 @@ class OpenBenchMarking:
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.hard_soft_tags = set(['Hardware', 'Software'])
         self.testid = 'unknown'
+        self.user_cols = ['User', 'SystemDescription', 'testid', 'Notes',
+                          'SystemIdentifier', 'GeneratedTitle', 'LastModified']
 
     def load_testid(self, testid):
         """
@@ -415,6 +417,7 @@ class xml2df(OpenBenchMarking):
 
         return pd.DataFrame(dict_res)
 
+
 def download_from_openbm(search_string):
 
     df = pd.DataFrame()
@@ -434,9 +437,8 @@ def download_from_openbm(search_string):
     df.drop_duplicates(inplace=True)
     # columns that can hold different values but still could refer to the same
     # test data. So basically all user defined columns should be ignored.
-    ignore_cols = ['User', 'SystemDescription', 'testid', 'LastModified',
-                   'SystemIdentifier', 'GeneratedTitle'] # Notes
-    cols = list(set(df.columns) - set(ignore_cols))
+    # But do not drop the columns, just ignore them for de-duplication
+    cols = list(set(df.columns) - set(xml.user_cols))
     # mark True for values that are NOT duplicates
     df = df.loc[np.invert(df.duplicated(subset=cols).values)]
 
@@ -449,6 +451,28 @@ def download_from_openbm(search_string):
 #    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
 
     return df
+
+
+def explore_dataset(df, label1, label2, label3):
+
+    # how many cases per test, and how many per resolution
+    df_dict = {'nr':[], 'test':[]}
+
+    for grname, gr in df.groupby(label1):
+        df_dict['nr'].append(len(gr))
+        df_dict['test'].append(grname)
+        print('{:5d} : {}'.format(len(gr), grname))
+
+    df_tests = pd.DataFrame(df_dict)
+    df_tests.sort_values('nr', inplace=True)
+    for col in df_tests['test']:
+        df_sel = df[df[label1]==col]
+        print()
+        print('{:5d} : {}'.format(len(df_sel), col))
+        for grname2, gr2 in df_sel.groupby(label2):
+            print(' '*8 + '{:5d} : {}'.format(len(gr2), grname2))
+            for grname3, gr3 in gr2.groupby(label3):
+                print(' '*16 + '{:5d} : {}'.format(len(gr3), grname3))
 
 
 # turn off upper axis tick labels, rotate the lower ones, etc
@@ -656,11 +680,20 @@ def example_xml():
     obm.write_local(test_result='{}-rx-480-1920x1080'.format('unigine-all'))
 
 
-def example_dataframe():
+def example1_dataframe():
 
     # load previously donwload data
     xml = xml2df()
     df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+
+    df.drop(xml.user_cols, inplace=True, axis=1)
+    df.drop_duplicates(inplace=True)
+
+    # -------------------------------------------------------------------------
+#    explore_dataset(df, 'ResultIdentifier', 'ResultDescription')
+#    explore_dataset(df, 'Processor', 'Graphics')
+    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor')
+    # -------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------
     # select only subset of data, and plot
@@ -691,34 +724,68 @@ def example_dataframe():
 #    plot_barh_groups(df, label_yval, label_grousp, label_xval='Value')
 
     # -------------------------------------------------------------------------
-
-    # remove all doubles
-
-    len(df_sel['Graphics'].unique())
-
-    df_sel['Screen Resolution'].unique()
-    df_sel['ResultDescription'].unique()
-
-    for resolution, gr in df_sel.groupby('ResultDescription'):
-        print(len(gr['Graphics'].unique()), len(gr['Processor'].unique()),
-              resolution)
-        plt.figure(resolution)
-        plt.plot()
-        for col in gr:
-            if len(gr[col].unique()) !=1:
-                print('='*10, col)
-                print(gr[col].unique())
-            print(col, len(gr[col].unique()))
-
 #    pp=df[:10]
 #    grp_lwr = pp['Scale'].str.lower().str.find('watts')
 #    isel = grp_lwr[grp_lwr > -1].index
 #    pp['Scale'].loc[isel]
 
 
+def example2_dataframe():
+
+    # load previously donwload data
+    xml = xml2df()
+    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+    df.drop(xml.user_cols, inplace=True, axis=1)
+    df.drop_duplicates(inplace=True)
+
+    # -------------------------------------------------------------------------
+    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor')
+    # -------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
+    # select only subset of data, and plot
+    # only R470 graphic cards
+    df_find = df['Graphics'].str.lower().str.find('rx 470')
+    # grp_lwr holds -1 for entries that do not contain the search string
+    # we are only interested in taking the indeces of those entries that do
+    # contain our search term, so antyhing above -1
+    df_sel = df.loc[(df_find > -1).values]
+
+    # now see for which tests we have sufficient data
+    explore_dataset(df_sel, 'ResultIdentifier', 'ResultDescription', 'Processor')
+
+    # select only a certain test
+    df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/xonotic-1.4.0']
+
+    # and the same version/resultion of said test
+    seltext = 'Resolution: 1920 x 1080 - Effects Quality: Ultimate'
+    sel = df_sel[df_sel['ResultDescription']==seltext].copy()
+    # cast Value to a float64
+    sel['Value'] = sel['Value'].astype(np.float64)
+    # remove close to zero measurements, and those cases where the Display
+    # Driver field got lost
+#    sel = sel[(sel['Display Driver']!='None') &
+#              (sel['Value']>0.5)]
+
+    qq = sel[sel['Processor']==' Intel Core i5-4670K @ 3.80GHz (4 Cores)']
+    for col in qq:
+        print(len(qq[col].unique()), col)
+        if len(qq[col].unique()) > 1:
+            print('******', qq[col].unique())
+
+    # now we need to pivot the table into a different form:
+    # each column is a different hardware/software combination, and each row
+    # is another different variable (test/hardware/software)
+
+#    plot_barh(sel, 'Processor', label_xval='Value')
+    plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
+
+
 if __name__ == '__main__':
 
     dummy = None
+
+#    df = download_from_openbm('RX 480')
 
 #    obm = xml2df()
 #    io = pjoin(obm.flocal, "1606281-HA-RX480LINU80/composite.xml")
