@@ -415,6 +415,106 @@ class xml2df(OpenBenchMarking):
 
         return pd.DataFrame(dict_res)
 
+def download_from_openbm(search_string):
+
+    df = pd.DataFrame()
+    xml = xml2df()
+    # get a list of test result id's from using the search function on obm.org
+    testids = xml.get_all_profiles(search_string)
+    for testid in tqdm(testids):
+#        print(testid)
+        # download each result xml file and convert to df
+        xml.load_testid(testid)
+        # save in one big dataframe
+        df = df.append(xml.convert())
+    # create a new unique index
+    df.index = np.arange(len(df))
+
+    # there are probably going to be more duplicates
+    df.drop_duplicates(inplace=True)
+    # columns that can hold different values but still could refer to the same
+    # test data. So basically all user defined columns should be ignored.
+    ignore_cols = ['User', 'SystemDescription', 'testid', 'LastModified',
+                   'SystemIdentifier', 'GeneratedTitle'] # Notes
+    cols = list(set(df.columns) - set(ignore_cols))
+    # mark True for values that are NOT duplicates
+    df = df.loc[np.invert(df.duplicated(subset=cols).values)]
+
+    # TODO: Value can also be a time series of measurements
+    # convert mean values from float to text
+#    df['Value'] = df['Value'].values.astype(np.float64)
+
+    # save the DataFrame
+    df.to_hdf(pjoin(xml.flocal, 'search_{}.h5'.format(search_string)), 'table')
+#    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
+
+    return df
+
+
+# turn off upper axis tick labels, rotate the lower ones, etc
+#for ax in ax1, ax2, ax2t, ax3:
+#    if ax != ax3:
+#        for label in ax.get_xticklabels():
+#            label.set_visible(False)
+#    else:
+#        for label in ax.get_xticklabels():
+#            label.set_rotation(30)
+#            label.set_horizontalalignment('right')
+#    ax.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+
+
+def plot_barh(df, label_yval, label_xval='Value'):
+
+    fig_heigth_inches = len(df) * (6/15)
+    figsize = (12, fig_heigth_inches)
+
+    height = 0.8
+    tick_height = 1.0
+
+    fig, ax = plt.subplots(figsize=figsize)
+    yticks = np.arange(0, len(df)*tick_height, tick_height)
+    ax.barh(yticks, df[label_xval].values, align='center', height=height)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(df[label_yval].values.astype(str))
+    ax.set_ylim(-height/2, yticks[-1] + height/2)
+    fig.tight_layout()
+
+    return fig, ax
+
+
+def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
+
+    fig_heigth_inches = len(df) * (6/15)
+    figsize = (12, fig_heigth_inches)
+
+    height = 1.0
+    tick_height = 1.0
+    gr_spacing = height/2
+    nr_groups = len(df[label_group].unique())
+    nr_cases = len(df)
+    nr_bars = nr_groups + nr_cases/2
+    fig_heigth_inches = nr_bars * tick_height * (6/15)
+    y0 = 0
+    yticks, yticklabels = np.array([]), np.array([])
+    yticks_center, yticklabels_center = [], []
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for igr, (grname, gr) in enumerate(df.groupby(label_group)):
+        gr_yticks = np.arange(y0, y0+len(gr)*tick_height, tick_height)
+        ax.barh(gr_yticks, gr[label_xval], align='center', height=height)
+        yticks = np.append(yticks, gr_yticks)
+        yticklabels = np.append(yticklabels, gr[label_yval].values.astype(str))
+        yticks_center.append(y0 + len(gr)*tick_height/2 - tick_height/2)
+        yticklabels_center.append(grname)
+        y0 += (len(gr) + gr_spacing)
+
+    ax.set_ylim(-tick_height/2, yticks[-1] + tick_height/2)
+    ax.set_yticks(yticks_center)
+    ax.set_yticklabels(yticklabels_center)
+    fig.tight_layout()
+
+    return fig, ax
+
 
 def example_xml():
     """Manually select a bunch of cases and select only those systems and
@@ -558,37 +658,8 @@ def example_xml():
 
 def example_dataframe():
 
-    df = pd.DataFrame()
+    # load previously donwload data
     xml = xml2df()
-    # get a list of test result id's from using the search function on obm.org
-    testids = xml.get_all_profiles('RX 470')
-    for testid in tqdm(testids):
-#        print(testid)
-        # download each result xml file and convert to df
-        xml.load_testid(testid)
-        # save in one big dataframe
-        df = df.append(xml.convert())
-    # create a new unique index
-    df.index = np.arange(len(df))
-
-    # there are probably going to be more duplicates
-    df.drop_duplicates(inplace=True)
-    # columns that can hold different values but still could refer to the same
-    # test data. So basically all user defined columns should be ignored.
-    ignore_cols = ['User', 'SystemDescription', 'testid', 'LastModified',
-                   'SystemIdentifier', 'GeneratedTitle'] # Notes
-    cols = list(set(df.columns) - set(ignore_cols))
-    # mark True for values that are NOT duplicates
-    df = df.loc[np.invert(df.duplicated(subset=cols).values)]
-
-    # TODO: Value can also be a time series of measurements
-    # convert mean values from float to text
-#    df['Value'] = df['Value'].values.astype(np.float64)
-
-    # save the DataFrame
-    df.to_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
-#    df.to_excel(pjoin(xml.flocal, 'search_rx_470.xlsx'))
-
     df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
 
     # -------------------------------------------------------------------------
@@ -598,7 +669,6 @@ def example_dataframe():
     # grp_lwr holds -1 for entries that do not contain the search string
     # we are only interested in taking the indeces of those entries that do
     # contain our search term, so antyhing above -1
-#    isel = res_find[res_find > -1].index
     df_sel = df.loc[(res_find > -1).values]
     # select only a certain test
     df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/unigine-valley-1.1.4']
@@ -616,22 +686,9 @@ def example_dataframe():
     # each column is a different hardware/software combination, and each row
     # is another different variable (test/hardware/software)
 
-
-    # -------------------------------------------------------------------------
-    # PLOTTING
-#    ax = sel['Value'].plot.barh()
-    fig, ax = plt.subplots(figsize=(12,12))
-    yticks = np.linspace(0, 10, num=len(sel))
-    height = (yticks[1] - yticks[0])*0.8
-    ax.barh(yticks, sel['Value'].values, align='center', height=height)
-    ax.set_yticks(yticks)
-    ax.set_yticklabels(sel['Processor'].values.astype(str))
-    ax.set_ylim(-height/2, 10 + height/2)
-    fig.tight_layout()
-
-#    fig, ax = plt.subplots()
-#    ax.barh(np.arange(5), [9,9,10,11,12], align='center')
-#    ax.set_yticklabels(list('abcde'))
+    plot_barh(sel, 'Processor', label_xval='Value')
+    plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
+#    plot_barh_groups(df, label_yval, label_grousp, label_xval='Value')
 
     # -------------------------------------------------------------------------
 
