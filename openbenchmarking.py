@@ -420,6 +420,10 @@ class xml2df(OpenBenchMarking):
 
 def download_from_openbm(search_string):
 
+    # TODO: another de-duplication strategy: if the results are the same,
+    # and some of the other differences are due to a None or something we
+    # can also be confident we are talking about the same test case.
+
     df = pd.DataFrame()
     xml = xml2df()
     # get a list of test result id's from using the search function on obm.org
@@ -689,20 +693,16 @@ def example1_dataframe():
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
 
-    # -------------------------------------------------------------------------
-#    explore_dataset(df, 'ResultIdentifier', 'ResultDescription')
-#    explore_dataset(df, 'Processor', 'Graphics')
-    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor')
-    # -------------------------------------------------------------------------
-
-    # -------------------------------------------------------------------------
-    # select only subset of data, and plot
     # only R470 graphic cards
     res_find = df['Graphics'].str.lower().str.find('rx 470')
     # grp_lwr holds -1 for entries that do not contain the search string
     # we are only interested in taking the indeces of those entries that do
     # contain our search term, so antyhing above -1
     df_sel = df.loc[(res_find > -1).values]
+
+    # now see for which tests we have sufficient data
+    explore_dataset(df_sel, 'ResultIdentifier', 'ResultDescription', 'Processor')
+
     # select only a certain test
     df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/unigine-valley-1.1.4']
 
@@ -738,13 +738,7 @@ def example2_dataframe():
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
 
-    # -------------------------------------------------------------------------
-    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor')
-    # -------------------------------------------------------------------------
-
-    # -------------------------------------------------------------------------
-    # select only subset of data, and plot
-    # only R470 graphic cards
+    # only RX 470 graphic cards
     df_find = df['Graphics'].str.lower().str.find('rx 470')
     # grp_lwr holds -1 for entries that do not contain the search string
     # we are only interested in taking the indeces of those entries that do
@@ -772,6 +766,45 @@ def example2_dataframe():
         print(len(qq[col].unique()), col)
         if len(qq[col].unique()) > 1:
             print('******', qq[col].unique())
+
+    # now we need to pivot the table into a different form:
+    # each column is a different hardware/software combination, and each row
+    # is another different variable (test/hardware/software)
+
+#    plot_barh(sel, 'Processor', label_xval='Value')
+    plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
+
+
+def example3_dataframe():
+
+    # load previously donwload data
+    xml = xml2df()
+    df = pd.read_hdf(pjoin(xml.flocal, 'search_rx_470.h5'), 'table')
+
+    df.drop(xml.user_cols, inplace=True, axis=1)
+    df.drop_duplicates(inplace=True)
+
+    # select only subset of data, and plot
+    # only R470 graphic cards
+    res_find = df['Graphics'].str.lower().str.find('rx 470')
+    # grp_lwr holds -1 for entries that do not contain the search string
+    # we are only interested in taking the indeces of those entries that do
+    # contain our search term, so antyhing above -1
+    df_sel = df.loc[(res_find > -1).values]
+
+    explore_dataset(df_sel, 'ResultIdentifier', 'ResultDescription', 'Processor')
+
+    # select only a certain test
+    df_sel = df_sel[df_sel['ResultIdentifier'] == 'pts/xonotic-1.4.0']
+
+    # and the same version/resultion of said test
+    seltext = 'Resolution: 1920 x 1080 - Effects Quality: Ultimate'
+    sel = df_sel[df_sel['ResultDescription']==seltext].copy()
+    # cast Value to a float64
+    sel['Value'] = sel['Value'].astype(np.float64)
+    # remove close to zero measurements
+#    sel = sel[(sel['Display Driver']!='None') &
+#              (sel['Value']>0.5)]
 
     # now we need to pivot the table into a different form:
     # each column is a different hardware/software combination, and each row
