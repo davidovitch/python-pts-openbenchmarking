@@ -65,6 +65,14 @@ class OpenBenchMarking:
 
         return ids
 
+    def write_testid_xml(self):
+        fpath = pjoin(self.pts_local, self.testid)
+        if not os.path.isdir(fpath):
+            os.makedirs(fpath)
+        fname = pjoin(fpath, 'composite.xml')
+        with open(fname, 'w') as f:
+            f.write(etree.tostring(self.root).decode())
+
 
 class EditXML(OpenBenchMarking):
 
@@ -418,7 +426,7 @@ class xml2df(OpenBenchMarking):
         return pd.DataFrame(dict_res)
 
 
-def download_from_openbm(search_string):
+def download_from_openbm(search_string, save_xml=False):
 
     # TODO: another de-duplication strategy: if the results are the same,
     # and some of the other differences are due to a None or something we
@@ -428,12 +436,26 @@ def download_from_openbm(search_string):
     xml = xml2df()
     # get a list of test result id's from using the search function on obm.org
     testids = xml.get_all_profiles(search_string)
+
+    # save list
+    fname = 'testids_{}.txt'.format(search_string)
+    np.savetxt(fname, np.array(testids, dtype=np.str), fmt='%22s')
+
     for testid in tqdm(testids):
 #        print(testid)
         # download each result xml file and convert to df
         xml.load_testid(testid)
+        # save the original XML file
+        if save_xml:
+            xml.write_testid_xml()
         # save in one big dataframe
-        df = df.append(xml.convert())
+        try:
+            df = df.append(xml.convert())
+        except Exception as e:
+            print('*'*79)
+            print('conversion to df of {} failed.'.format(testid))
+            print('*'*79)
+#            raise e
     # create a new unique index
     df.index = np.arange(len(df))
 
@@ -824,8 +846,8 @@ if __name__ == '__main__':
 #    df = download_from_openbm('RX 480')
     # save the DataFrame
 #    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.pts_local, 'search_rx_470.xlsx'))
-#    df.to_csv(pjoin(xml.pts_local, 'search_rx_470.csv'))
+#    df.to_excel(pjoin(xml.pts_local, 'search_{}.xlsx'.format(search_string)))
+#    df.to_csv(pjoin(xml.pts_local, 'search_{}.csv'.format(search_string)))
 
 #    obm = xml2df()
 #    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
