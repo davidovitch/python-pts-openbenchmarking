@@ -450,11 +450,6 @@ def download_from_openbm(search_string):
     # convert mean values from float to text
 #    df['Value'] = df['Value'].values.astype(np.float64)
 
-    # save the DataFrame
-#    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.pts_local, 'search_rx_470.xlsx'))
-    df.to_csv(pjoin(xml.pts_local, 'search_rx_470.csv'))
-
     return df
 
 
@@ -825,7 +820,12 @@ if __name__ == '__main__':
 
     dummy = None
 
+#    search_string = 'RX 480'
 #    df = download_from_openbm('RX 480')
+    # save the DataFrame
+#    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
+#    df.to_excel(pjoin(xml.pts_local, 'search_rx_470.xlsx'))
+#    df.to_csv(pjoin(xml.pts_local, 'search_rx_470.csv'))
 
 #    obm = xml2df()
 #    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
