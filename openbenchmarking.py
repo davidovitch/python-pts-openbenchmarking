@@ -453,6 +453,7 @@ def download_from_openbm(search_string):
     # save the DataFrame
 #    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
 #    df.to_excel(pjoin(xml.pts_local, 'search_rx_470.xlsx'))
+    df.to_csv(pjoin(xml.pts_local, 'search_rx_470.csv'))
 
     return df
 
@@ -534,6 +535,12 @@ def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
         yticklabels = np.append(yticklabels, gr[label_yval].values.astype(str))
         yticks_center.append(y0 + len(gr)*tick_height/2 - tick_height/2)
         yticklabels_center.append(grname)
+
+        # write the label_yval into the bar
+        for y, label in zip(gr_yticks, gr[label_yval].values.astype(str)):
+            ax.text(0, y, label, fontsize=8, verticalalignment='center',
+                    horizontalalignment='left', color='w')
+
         y0 += (len(gr) + gr_spacing)
 
     ax.set_ylim(-tick_height, yticks[-1] + tick_height)
