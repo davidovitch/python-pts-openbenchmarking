@@ -8,6 +8,8 @@ Created on Sun Nov 27 13:03:26 2016
 import os
 from os.path import join as pjoin
 from datetime import date
+from glob import glob
+import re
 
 from lxml.html import fromstring
 from lxml import etree
@@ -432,7 +434,7 @@ class xml2df(OpenBenchMarking):
         return pd.DataFrame(dict_res)
 
 
-def download_from_openbm(search_string, save_xml=False):
+def download_from_openbm(search_string, save_xml=False, use_cache=True):
     """
 
     Parameters
@@ -445,6 +447,9 @@ def download_from_openbm(search_string, save_xml=False):
     save_xml : boolean, default=False
         If set to True, all test id's XML files are saved in the user's
         phoronix test suite home directory.
+
+    use_cache : boolean, default=True
+        Load file from pts_local if it exists.
 
     """
 
@@ -461,9 +466,16 @@ def download_from_openbm(search_string, save_xml=False):
     fname = 'testids_{}.txt'.format(search_string)
     np.savetxt(fname, np.array(testids, dtype=np.str), fmt='%22s')
 
+    fpath = os.path.join(xml.pts_local, '*')
+    testids_saved = set([os.path.basename(k) for k in glob(fpath)])
+
+    # if cache is used, only download new cases
+    if use_cache:
+        testids = set(testids) - testids_saved
+        print('start downloading {} test id\'s'.format(len(testids)))
+
     for testid in tqdm(testids):
-#        print(testid)
-        # download each result xml file and convert to df
+        # download xml file
         xml.load_testid(testid)
         # save the original XML file
         if save_xml:
@@ -493,6 +505,53 @@ def download_from_openbm(search_string, save_xml=False):
 #    df['Value'] = df['Value'].values.astype(np.float64)
 
     return df
+
+
+def load_local_testids():
+    """Load all local test id xml files and merge into one pandas.DataFrame.
+    """
+
+    df = pd.DataFrame()
+    xml = xml2df()
+
+    # make a list of all available test id folders
+    base = os.path.join(xml.pts_local, '*')
+    failed = []
+
+    regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
+    i = 0
+
+    for fpath in glob(base):
+        testid = os.path.basename(fpath)
+        regex.findall(testid)
+        if len(regex.findall(testid)) != 1:
+            continue
+        fpath = pjoin(xml.pts_local, testid, 'composite.xml')
+        xml.load(fpath)
+        try:
+            df = df.append(xml.convert())
+            i += 1
+        except Exception as e:
+            failed.append(testid)
+            print('*'*79)
+            print('conversion to df of {} failed.'.format(testid))
+            print('*'*79)
+
+    print('loaded {} xml files locally'.format(i))
+
+    # create a new unique index
+    df.index = np.arange(len(df))
+
+    # there are probably going to be more duplicates
+    df.drop_duplicates(inplace=True)
+    # columns that can hold different values but still could refer to the same
+    # test data. So basically all user defined columns should be ignored.
+    # But do not drop the columns, just ignore them for de-duplication
+    cols = list(set(df.columns) - set(xml.user_cols))
+    # mark True for values that are NOT duplicates
+    df = df.loc[np.invert(df.duplicated(subset=cols).values)]
+
+    return df, failed
 
 
 def explore_dataset(df, label1, label2, label3, min_cases=3):
@@ -601,7 +660,7 @@ if __name__ == '__main__':
     xml = xml2df()
 
 #    search_string = 'RX 480'
-#    df = download_from_openbm(search_string, save_xml=True)
+#    df = download_from_openbm(search_string, save_xml=False, use_cache=True)
 #    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
 #    df.to_excel(pjoin(xml.pts_local, 'search_{}.xlsx'.format(search_string)))
 #    df.to_csv(pjoin(xml.pts_local, 'search_{}.csv'.format(search_string)))
