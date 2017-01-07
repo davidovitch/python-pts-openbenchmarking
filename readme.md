@@ -1,5 +1,5 @@
 A simple prototype to read/edit/download PTS test profiles from
-[OpenBenchMarking.org](http://openbenchmarking.org/), see also issue
+[OpenBenchmarking.org](http://openbenchmarking.org/), see also issue
 [146](phoronix-test-suite/phoronix-test-suite#146) on the
 [PTS](https://github.com/phoronix-test-suite/phoronix-test-suite) issue tracker.
 
