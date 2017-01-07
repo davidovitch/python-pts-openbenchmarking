@@ -369,7 +369,7 @@ class xml2df(OpenBenchMarking):
 
         return pd.DataFrame(dict_sys)
 
-    def data_entry2df(self):
+    def data_entry2df(self, missing_val=None):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
         the Result tags to a Pandas DataFrame. This means that the data
         contained in the Result tag will now be replicated for each of the
@@ -392,18 +392,16 @@ class xml2df(OpenBenchMarking):
             res_id = {k.tag:k.text for k in res_el}
             res_id.pop('Data')
             data_entries = res_el.find('Data')
-#            # add each result to the collection
-#            for entry in data_entries:
-#                # start with empty but with all required keys dict
-#                row = {k:None for k in data_entry}
-#                # update with all tags found in the xml element
-#                row.update({k.tag:k.text for k in entry})
-#                # Identifier is used in both Result and Data, rename to
-#                # SystemIdentifier, and remove Identifier
-#                row['SystemIdentifier'] = row['Identifier']
-#                row.pop('Identifier')
-#            for key, value in row:
-#                dict_res[key].append(value)
+            # if the result identifier is empty, it corresponds to the previous
+            # result (usually CPU/frame time for LINE_GRAPH). Add one
+            # additional check: result title should be the same
+            if res_id['Identifier'] is not missing_val:
+                res_id_val = res_id['Identifier']
+                res_title = res_id['Title']
+            elif res_id['Title'] == res_title:
+                res_id['Identifier'] = res_id_val
+                res_id['Title'] = res_title
+
             # add each result to the collection
             tmp = {k:[] for k in data_entry}
             for entry in data_entries:
@@ -440,8 +438,8 @@ class xml2df(OpenBenchMarking):
                         break
             else:
                 dict_res['SystemIndex'].append(self.ids[identifier])
-                dict_res['DataEntryIdentifierExtra'].append('none')
-                dict_res['DataEntryIdentifierShort'].append('none')
+                dict_res['DataEntryIdentifierExtra'].append(missing_val)
+                dict_res['DataEntryIdentifierShort'].append(missing_val)
 
 #        for key, value in dict_res.items():
 #            print(key.rjust(28), len(value))
@@ -722,7 +720,7 @@ if __name__ == '__main__':
 #    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
 
 #    xml = xml2df()
-#    io = pjoin(xml.pts_local, "1409014-LI-NEWCPUSPO96/composite.xml")
+#    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
 #    xml.load(io)
 #    df = xml.convert()
 #    df_sys = xml.generated_system2df()
