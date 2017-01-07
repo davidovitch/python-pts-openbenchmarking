@@ -377,7 +377,8 @@ class xml2df(OpenBenchMarking):
         for key, value in dict_sys.items():
             if not len(systems) == len(value):
                 rpl = [key, len(value), len(systems)]
-                raise AssertionError('{} has {} elements instead of {}'.format(*rpl))
+                msg = '{} has {} elements instead of {}'.format(*rpl)
+                raise AssertionError(msg)
 
         # expand with the same values for Generated columns, this duplication
         # of data will make searching/selecting in the DataFrame later easier
@@ -398,11 +399,13 @@ class xml2df(OpenBenchMarking):
         contained in the Result tag will now be replicated for each of the
         Data/Entry tags for that given test result.
         """
-
-        result = ['Identifier', 'Title', 'AppVersion', 'Arguments',
+        # ResultOf indicates whether the result belongs to another result
+        # for example, corresponding CPU usage, render time per frame.
+        # ResultOf is not defined in the XML source.
+        result = ['Identifier', 'Title', 'AppVersion', 'Arguments', 'ResultOf',
                   'Description', 'Scale', 'Proportion', 'DisplayFormat']
         data_entry = ['Identifier', 'Value', 'RawString', 'JSON']
-        data_entry_ = ['DataEntryIdentifier', 'Value', 'RawString', 'JSON']
+        data_entry_ = ['DataEntryIdentifier'] + data_entry[1:]
         data_set = set(data_entry)
         rename = {'Identifier':'DataEntryIdentifier'}
 
@@ -410,6 +413,7 @@ class xml2df(OpenBenchMarking):
 
         res_elements = list(self.root.findall('Result'))
 
+        res_title = ''
         for res_el in res_elements:
             # get all the details of the test in question
             res_id = {k.tag:k.text for k in res_el}
@@ -418,22 +422,25 @@ class xml2df(OpenBenchMarking):
             # if the result identifier is empty, it corresponds to the previous
             # result (usually CPU/frame time for LINE_GRAPH). Add one
             # additional check: result title should be the same
-            res_title = ''
             if res_id['Identifier'] is not missing_val:
                 res_id_val = res_id['Identifier']
                 res_title = res_id['Title']
+                res_id['ResultOf'] = 'no'
             elif res_id['Title'] == res_title:
                 res_id['Identifier'] = res_id_val
                 res_id['Title'] = res_title
+                res_id['ResultOf'] = 'yes'
+            # some cases just have no result identifier and do not belong to
+            # another test
+            else:
+                res_id['ResultOf'] = 'no'
 
             # add each result to the collection
             tmp = {k:[] for k in data_entry}
             for entry in data_entries:
                 tmp = self._add2row(entry, data_set, tmp)
             # before merging, rename Identifier
-            for key, value in rename.items():
-                tmp[value] = tmp[key]
-                tmp.pop(key)
+            tmp = self._rename_dict_key(tmp, rename)
             # add with the rest
             for key, value in tmp.items():
                 dict_res[key].extend(value)
@@ -603,6 +610,7 @@ def load_local_testids():
         fpath = pjoin(xml.pts_local, testid, 'composite.xml')
         xml.load(fpath)
         xml.testid = testid
+        i += 1
 
         if df_dict is None:
             df_dict = xml.convert()
@@ -780,13 +788,13 @@ if __name__ == '__main__':
 #    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
 #    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
 
-#    xml = xml2df()
-#    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
-#    xml.load(io)
-#    df = xml.convert()
-#    df_sys = xml.generated_system2df()
-#    df_res = xml.data_entry2df()
+    xml = xml2df()
+    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
+    xml.load(io)
+    df_dict = xml.convert()
+#    dict_sys = xml.generated_system2dict()
+#    dict_res = xml.data_entry2dict()
 
 #    obm = xml2df()
 #    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
-#    df = obm.convert(io)
+#    df_dict = obm.convert(io)
