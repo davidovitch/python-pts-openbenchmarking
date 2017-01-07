@@ -7,7 +7,6 @@ Created on Sun Nov 27 13:03:26 2016
 
 import os
 from os.path import join as pjoin
-from datetime import date
 from glob import glob
 import re
 
@@ -208,8 +207,6 @@ class xml2df(OpenBenchMarking):
                                'Identifier':'ResultIdentifier',
                                'JSON':'DataEntryJSON',
                                'Title':'ResultTitle'}, inplace=True)
-        # drop the SystemIdentifier column since it is already part of df_sys
-        df_res.drop('SystemIdentifier', inplace=True, axis=1)
 
         df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
         # after merging both, SystemIndex is now obsolete
@@ -306,7 +303,7 @@ class xml2df(OpenBenchMarking):
                      'Notes', 'InternalTags', 'ReferenceID',
                      'PreSetEnvironmentVariables']
         system = ['Identifier', 'Hardware', 'Software', 'User', 'TimeStamp',
-                  'TestClientVersion', 'Notes', 'JSON']
+                  'TestClientVersion', 'Notes', 'JSON', 'System Layer']
         hardware = ['Processor', 'Motherboard', 'Chipset', 'Memory', 'Disk',
                     'Graphics', 'Audio', 'Network', 'Monitor']
         software = ['OS', 'Kernel', 'Desktop', 'Display Server',
@@ -382,9 +379,9 @@ class xml2df(OpenBenchMarking):
         result = ['Identifier', 'Title', 'AppVersion', 'Arguments',
                   'Description', 'Scale', 'Proportion', 'DisplayFormat']
         data_entry = ['Identifier', 'Value', 'RawString', 'JSON']
-        data_entry_ = ['SystemIdentifier', 'Value', 'RawString', 'JSON']
+        data_entry_ = ['DataEntryIdentifier', 'Value', 'RawString', 'JSON']
         data_set = set(data_entry)
-        rename = {'Identifier':'SystemIdentifier'}
+        rename = {'Identifier':'DataEntryIdentifier'}
 
         dict_res = {k:[] for k in result+data_entry_}
 
@@ -425,8 +422,26 @@ class xml2df(OpenBenchMarking):
         # add the index of the System as a column because SystemIdentifier is
         # not unique! Will be used when merging/joining with Generated/system
         dict_res['SystemIndex'] = []
-        for identifier in dict_res['SystemIdentifier']:
-            dict_res['SystemIndex'].append(self.ids[identifier])
+        # when having multiple bars per group, the data/entry identifier
+        # can be shorter compared to the system identifier, and also contains
+        # an additional label: "EXTRA LABEL: SHORT SYSTEM ID"
+        dict_res['DataEntryIdentifierExtra'] = []
+        dict_res['DataEntryIdentifierShort'] = []
+        for identifier in dict_res['DataEntryIdentifier']:
+            idf_split = identifier.split(': ')
+            if len(idf_split) == 2:
+                idf_short = idf_split[1]
+                dict_res['DataEntryIdentifierExtra'].append(idf_split[0])
+                dict_res['DataEntryIdentifierShort'].append(idf_split[1])
+                # find the long version of the identifier
+                for idf in self.ids:
+                    if idf.find(idf_short) > -1:
+                        dict_res['SystemIndex'].append(self.ids[idf])
+                        break
+            else:
+                dict_res['SystemIndex'].append(self.ids[identifier])
+                dict_res['DataEntryIdentifierExtra'].append('none')
+                dict_res['DataEntryIdentifierShort'].append('none')
 
 #        for key, value in dict_res.items():
 #            print(key.rjust(28), len(value))
@@ -457,10 +472,10 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
     # and some of the other differences are due to a None or something we
     # can also be confident we are talking about the same test case.
 
-    df = pd.DataFrame()
     xml = xml2df()
     # get a list of test result id's from using the search function on obm.org
     testids = xml.get_profiles(search_string)
+    print('found {} testids on search page'.format(len(testids)))
 
     # save list
     fname = 'testids_{}.txt'.format(search_string)
@@ -472,8 +487,11 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
     # if cache is used, only download new cases
     if use_cache:
         testids = set(testids) - testids_saved
+        print('')
         print('start downloading {} test id\'s'.format(len(testids)))
+        print('')
 
+    df = pd.DataFrame()
     for testid in tqdm(testids):
         # download xml file
         xml.load_testid(testid)
@@ -484,9 +502,9 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
         try:
             df = df.append(xml.convert())
         except Exception as e:
-            print('*'*79)
+#            print('*'*79)
             print('conversion to df of {} failed.'.format(testid))
-            print('*'*79)
+#            print('*'*79)
 #            raise e
     # create a new unique index
     df.index = np.arange(len(df))
@@ -521,7 +539,7 @@ def load_local_testids():
     regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
     i = 0
 
-    for fpath in glob(base):
+    for fpath in tqdm(glob(base)):
         testid = os.path.basename(fpath)
         regex.findall(testid)
         if len(regex.findall(testid)) != 1:
@@ -533,9 +551,10 @@ def load_local_testids():
             i += 1
         except Exception as e:
             failed.append(testid)
-            print('*'*79)
+#            print('*'*79)
             print('conversion to df of {} failed.'.format(testid))
-            print('*'*79)
+#            print('*'*79)
+            raise e
 
     print('loaded {} xml files locally'.format(i))
 
@@ -670,11 +689,12 @@ if __name__ == '__main__':
 #    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
 #    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
 
-#    obm = xml2df()
-#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
-#    obm.load(io)
-#    df_sys = obm.generated_system2df()
-#    df_res = obm.data_entry2df()
+#    xml = xml2df()
+#    io = pjoin(xml.pts_local, "1409014-LI-NEWCPUSPO96/composite.xml")
+#    xml.load(io)
+#    df = xml.convert()
+#    df_sys = xml.generated_system2df()
+#    df_res = xml.data_entry2df()
 
 #    obm = xml2df()
 #    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
