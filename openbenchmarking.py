@@ -475,7 +475,12 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
     xml = xml2df()
     # get a list of test result id's from using the search function on obm.org
     testids = xml.get_profiles(search_string)
-    print('found {} testids on search page'.format(len(testids)))
+    nr_testids = len(testids)
+    if nr_testids < 1:
+        print('no tests found for search query: {}'.format(search_string))
+        return None
+    else:
+        print('found {} testids on search page'.format(nr_testids))
 
     # save list
     fname = 'testids_{}.txt'.format(search_string)
@@ -487,8 +492,12 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
     # if cache is used, only download new cases
     if use_cache:
         testids = set(testids) - testids_saved
+        nr_testids = len(testids)
+        if nr_testids < 1:
+            print('all testids have already been downloaded')
+            return None
         print('')
-        print('start downloading {} test id\'s'.format(len(testids)))
+        print('start downloading {} test id\'s'.format(nr_testids))
         print('')
 
     df = pd.DataFrame()
