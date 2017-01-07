@@ -534,6 +534,22 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
     return df
 
 
+def split_cpu_info(df):
+    """Processor tag also contains number cores and CPU frequency, split them
+    off into their own columns. Format: Intel Core i7-6700K @ 4.20GHz (8 Cores)
+    """
+
+    df_add = df['Processor'].str.split(' @ ', expand=True)
+    freq = df_add[1].str.split(' \(', expand=True)
+    cores = freq[1].str.split(' Co', expand=True)
+
+    df['ProcessorFrequency'] = freq[0]
+    df['ProcessorCores'] = cores[0]
+    df['ProcessorName'] = df_add[0]
+
+    return df
+
+
 def load_local_testids():
     """Load all local test id xml files and merge into one pandas.DataFrame.
     """
@@ -555,6 +571,7 @@ def load_local_testids():
             continue
         fpath = pjoin(xml.pts_local, testid, 'composite.xml')
         xml.load(fpath)
+        xml.testid = testid
         try:
             df = df.append(xml.convert())
             i += 1
@@ -578,6 +595,12 @@ def load_local_testids():
     cols = list(set(df.columns) - set(xml.user_cols))
     # mark True for values that are NOT duplicates
     df = df.loc[np.invert(df.duplicated(subset=cols).values)]
+
+    df = split_cpu_info(df)
+
+    # trim all columns
+    for col in df:
+        df[col].str.strip()
 
     return df, failed
 
