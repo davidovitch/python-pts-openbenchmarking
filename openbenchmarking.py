@@ -9,6 +9,7 @@ import os
 from os.path import join as pjoin
 from glob import glob
 import re
+import gc
 
 from lxml.html import fromstring
 from lxml import etree
@@ -195,29 +196,51 @@ class xml2df(OpenBenchMarking):
         elif testid is not None:
             self.load_testid(testid)
 
+    def _rename_dict_key(self, df_dict, rename):
+        """rename a key in a dictionary"""
+        for key, value in rename.items():
+            df_dict[value] = df_dict[key]
+            df_dict.pop(key)
+        return df_dict
+
     def convert(self):
+        """Convert the loaded XML file into a DataFrame ready dictionary of
+        lists.
+        """
 
-        df_sys = self.generated_system2df()
-        df_sys.rename(columns={'Description':'SystemDescription',
-                               'Identifier':'SystemIdentifier',
-                               'JSON':'SystemJSON',
-                               'Title':'GeneratedTitle'}, inplace=True)
-        df_res = self.data_entry2df()
-        df_res.rename(columns={'Description':'ResultDescription',
-                               'Identifier':'ResultIdentifier',
-                               'JSON':'DataEntryJSON',
-                               'Title':'ResultTitle'}, inplace=True)
+        dict_sys = self.generated_system2dict()
+        rename = {'Description':'SystemDescription',
+                  'Identifier':'SystemIdentifier',
+                  'JSON':'SystemJSON',
+                  'Title':'GeneratedTitle'}
+        dict_sys = self._rename_dict_key(dict_sys, rename)
 
-        df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
-        # after merging both, SystemIndex is now obsolete
-        df.drop('SystemIndex', inplace=True, axis=1)
+        dict_res = self.data_entry2dict()
+        rename = {'Description':'ResultDescription',
+                  'Identifier':'ResultIdentifier',
+                  'JSON':'DataEntryJSON',
+                  'Title':'ResultTitle'}
+        dict_res = self._rename_dict_key(dict_res, rename)
 
-        # convert object columns to string, but leave other data types as is
-        for col, dtype in df.dtypes.items():
-            if isinstance(dtype, object):
-                df[col] = df[col].values.astype(np.str)
+        # add columns for the system data
+        for col in dict_sys:
+            if col in dict_res:
+                raise KeyError('{} already in df_dict'.format(col))
+            dict_res[col] = []
 
-        return df
+        # for each data result entry, add the system col values
+        for sys_index in dict_res['SystemIndex']:
+            for col, val in dict_sys.items():
+                dict_res[col].append(dict_sys[col][sys_index])
+        dict_res.pop('SystemIndex')
+
+        # doing this as DataFrames is very expensive considering the small
+        # amount of data per XML file, and the large number of XML files.
+#        df = pd.merge(df_sys, df_res, left_index=True, right_on='SystemIndex')
+#        # after merging both, SystemIndex is now obsolete
+#        df.drop('SystemIndex', inplace=True, axis=1)
+
+        return dict_res
 
     def _split2dict(self, string):
         """Convert following string to dictionary:
@@ -286,7 +309,7 @@ class xml2df(OpenBenchMarking):
 
         return df_dict
 
-    def generated_system2df(self):
+    def generated_system2dict(self):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
         the Generated and System tags to a Pandas DataFrame. This means that
         the data contained in the Generated tag will now be repeated for each
@@ -367,9 +390,9 @@ class xml2df(OpenBenchMarking):
         # the indices for Identifier in Results/Data/Entry
         self.ids = {key:i for i,key in enumerate(dict_sys['Identifier'])}
 
-        return pd.DataFrame(dict_sys)
+        return dict_sys
 
-    def data_entry2df(self, missing_val=None):
+    def data_entry2dict(self, missing_val=None):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
         the Result tags to a Pandas DataFrame. This means that the data
         contained in the Result tag will now be replicated for each of the
@@ -395,6 +418,7 @@ class xml2df(OpenBenchMarking):
             # if the result identifier is empty, it corresponds to the previous
             # result (usually CPU/frame time for LINE_GRAPH). Add one
             # additional check: result title should be the same
+            res_title = ''
             if res_id['Identifier'] is not missing_val:
                 res_id_val = res_id['Identifier']
                 res_title = res_id['Title']
@@ -444,7 +468,7 @@ class xml2df(OpenBenchMarking):
 #        for key, value in dict_res.items():
 #            print(key.rjust(28), len(value))
 
-        return pd.DataFrame(dict_res)
+        return dict_res
 
 
 def download_from_openbm(search_string, save_xml=False, use_cache=True):
@@ -498,21 +522,31 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
         print('start downloading {} test id\'s'.format(nr_testids))
         print('')
 
-    df = pd.DataFrame()
+    df_dict = None
     for testid in tqdm(testids):
         # download xml file
         xml.load_testid(testid)
         # save the original XML file
         if save_xml:
             xml.write_testid_xml()
-        # save in one big dataframe
-        try:
-            df = df.append(xml.convert())
-        except Exception as e:
-#            print('*'*79)
-            print('conversion to df of {} failed.'.format(testid))
-#            print('*'*79)
-#            raise e
+
+        if df_dict is None:
+            df_dict = xml.convert()
+        else:
+            for key, val in xml.convert().items():
+                df_dict[key].extend(val)
+
+#        # save in one big dataframe
+#        try:
+#            df = df.append(xml.convert())
+#        except Exception as e:
+##            print('*'*79)
+#            print('conversion to df of {} failed.'.format(testid))
+##            print('*'*79)
+##            raise e
+
+    df = pd.DataFrame(df_dict)
+
     # create a new unique index
     df.index = np.arange(len(df))
 
@@ -551,8 +585,7 @@ def split_cpu_info(df):
 def load_local_testids():
     """Load all local test id xml files and merge into one pandas.DataFrame.
     """
-
-    df = pd.DataFrame()
+    df_dict = None
     xml = xml2df()
 
     # make a list of all available test id folders
@@ -570,17 +603,29 @@ def load_local_testids():
         fpath = pjoin(xml.pts_local, testid, 'composite.xml')
         xml.load(fpath)
         xml.testid = testid
-        try:
-            df = df.append(xml.convert())
-            i += 1
-        except Exception as e:
-            failed.append(testid)
-#            print('*'*79)
-            print('conversion to df of {} failed.'.format(testid))
-#            print('*'*79)
-            raise e
+
+        if df_dict is None:
+            df_dict = xml.convert()
+        else:
+            for key, val in xml.convert().items():
+                df_dict[key].extend(val)
+
+        # Very expensive to append many DataFrames to an ever growing DataFrame
+#        try:
+#            df = df.append(xml.convert())
+#            i += 1
+#        except Exception as e:
+#            failed.append(testid)
+##            print('*'*79)
+#            print('conversion to df of {} failed.'.format(testid))
+##            print('*'*79)
+#            raise e
 
     print('loaded {} xml files locally'.format(i))
+
+    df = pd.DataFrame(df_dict)
+    del df_dict
+    gc.collect()
 
     # create a new unique index
     df.index = np.arange(len(df))
@@ -593,12 +638,28 @@ def load_local_testids():
     cols = list(set(df.columns) - set(xml.user_cols))
     # mark True for values that are NOT duplicates
     df = df.loc[np.invert(df.duplicated(subset=cols).values)]
-
+    # split the Processer column in Processor info, frequency and cores
     df = split_cpu_info(df)
+
+    # convert object columns to string, but leave other data types as is
+    # ignore columns with very long strings to avoid out of memory errors
+    # RawString and Value can contain a time series
+    ignore = set(['RawString', 'Value'])
+    for col, dtype in df.dtypes.items():
+        if isinstance(dtype, object) and col not in ignore:
+            try:
+                df[col] = df[col].values.astype(np.str)
+            except Exception as e:
+                print(col)
+                raise e
 
     # trim all columns
     for col in df:
         df[col].str.strip()
+
+    # remove all spaces in column names
+    new_cols = {k:k.replace(' ', '').replace('-', '') for k in df.columns}
+    df.rename(columns=new_cols, inplace=True)
 
     return df, failed
 
