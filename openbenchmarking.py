@@ -542,15 +542,31 @@ def download_from_openbm(search_string, save_xml=True, use_cache=True):
 def split_cpu_info(df):
     """Processor tag also contains number cores and CPU frequency, split them
     off into their own columns. Format: Intel Core i7-6700K @ 4.20GHz (8 Cores)
+    This string can further be preceded by the number of CPU's: 2 x Intel ...
     """
 
     df_add = df['Processor'].str.split(' @ ', expand=True)
     freq = df_add[1].str.split(' \(', expand=True)
-    cores = freq[1].str.split(' Co', expand=True)
+    cores = freq[1].str.split(' Core', expand=True)
+    # set cores to -1 if not present instead of None
+    cores[0] = cores[0].astype(str)
+    sel = cores[cores[0]=='None'].index
+    cores.loc[sel, 0] = -1
 
-    df['ProcessorFrequency'] = freq[0]
-    df['ProcessorCores'] = cores[0]
-    df['ProcessorName'] = df_add[0]
+    count_name = df_add[0].str.split(' x ', expand=True)
+    # however, if ' x ' is missing the name will be on the first column instead
+    # of the second
+    count_name[1] = count_name[1].values.astype(str)
+    nocount = count_name[count_name[1]=='None'].index
+    # move the name one column right
+    count_name.loc[nocount, 1] = count_name.loc[nocount, 0]
+    # and the Processor count is one
+    count_name.loc[nocount, 0] = 1
+
+    df['ProcessorFrequency'] = freq[0].str.replace('GHz', '').astype(np.float32)
+    df['ProcessorCores'] = cores[0].astype(np.int16)
+    df['ProcessorCount'] = count_name[0].astype(np.int16)
+    df['ProcessorName'] = count_name[1]
 
     return df
 
