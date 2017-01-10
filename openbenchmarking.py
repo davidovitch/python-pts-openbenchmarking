@@ -66,8 +66,8 @@ class OpenBenchMarking:
         text = data.decode('utf-8') # str; can't be used if data is binary
 
         tree = fromstring(text)
-        # all profiles names are in h4 elements, and nothing else is, nice and easy
-        # but if a title is given, the id is in the parent link
+        # all profiles names are in h4 elements, and nothing else is, nice and
+        # easy but if a title is given, the id is in the parent link
         # url starts with /result/
         ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
 
@@ -478,7 +478,7 @@ class xml2df(OpenBenchMarking):
         return dict_res
 
 
-def download_from_openbm(search_string, save_xml=False, use_cache=True):
+def download_from_openbm(search_string, save_xml=True, use_cache=True):
     """
 
     Parameters
@@ -493,7 +493,7 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
         phoronix test suite home directory.
 
     use_cache : boolean, default=True
-        Load file from pts_local if it exists.
+        Do not download results that are already there.
 
     """
 
@@ -529,7 +529,6 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
         print('start downloading {} test id\'s'.format(nr_testids))
         print('')
 
-    df_dict = None
     for testid in tqdm(testids):
         # download xml file
         xml.load_testid(testid)
@@ -537,40 +536,7 @@ def download_from_openbm(search_string, save_xml=False, use_cache=True):
         if save_xml:
             xml.write_testid_xml()
 
-        if df_dict is None:
-            df_dict = xml.convert()
-        else:
-            for key, val in xml.convert().items():
-                df_dict[key].extend(val)
-
-#        # save in one big dataframe
-#        try:
-#            df = df.append(xml.convert())
-#        except Exception as e:
-##            print('*'*79)
-#            print('conversion to df of {} failed.'.format(testid))
-##            print('*'*79)
-##            raise e
-
-    df = pd.DataFrame(df_dict)
-
-    # create a new unique index
-    df.index = np.arange(len(df))
-
-    # there are probably going to be more duplicates
-    df.drop_duplicates(inplace=True)
-    # columns that can hold different values but still could refer to the same
-    # test data. So basically all user defined columns should be ignored.
-    # But do not drop the columns, just ignore them for de-duplication
-    cols = list(set(df.columns) - set(xml.user_cols))
-    # mark True for values that are NOT duplicates
-    df = df.loc[np.invert(df.duplicated(subset=cols).values)]
-
-    # TODO: Value can also be a time series of measurements
-    # convert mean values from float to text
-#    df['Value'] = df['Value'].values.astype(np.float64)
-
-    return df
+    return testids
 
 
 def split_cpu_info(df):
@@ -612,11 +578,19 @@ def load_local_testids():
         xml.testid = testid
         i += 1
 
+        try:
+            _df_dict = xml.convert()
+        except Exception as e:
+            print('')
+            print('conversion to df_dict of {} failed.'.format(testid))
+            print(e)
+            continue
+
         if df_dict is None:
-            df_dict = xml.convert()
-        else:
-            for key, val in xml.convert().items():
-                df_dict[key].extend(val)
+            df_dict = {key:[] for key in _df_dict}
+
+        for key, val in _df_dict.items():
+            df_dict[key].extend(val)
 
         # Very expensive to append many DataFrames to an ever growing DataFrame
 #        try:
@@ -663,7 +637,7 @@ def load_local_testids():
 
     # trim all columns
     for col in df:
-        df[col].str.strip()
+        df[col] = df[col].str.strip()
 
     # remove all spaces in column names
     new_cols = {k:k.replace(' ', '').replace('-', '') for k in df.columns}
@@ -788,10 +762,10 @@ if __name__ == '__main__':
 #    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
 #    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
 
-    xml = xml2df()
-    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
-    xml.load(io)
-    df_dict = xml.convert()
+#    xml = xml2df()
+#    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
+#    xml.load(io)
+#    df_dict = xml.convert()
 #    dict_sys = xml.generated_system2dict()
 #    dict_res = xml.data_entry2dict()
 
