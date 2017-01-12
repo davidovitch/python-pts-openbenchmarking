@@ -10,6 +10,7 @@ from os.path import join as pjoin
 from glob import glob
 import re
 import gc
+import hashlib
 
 from lxml.html import fromstring
 from lxml import etree
@@ -293,6 +294,9 @@ class xml2df(OpenBenchMarking):
             if el.tag in self.hard_soft_tags:
                 # split the Hardware and Software tags into the columns
                 tmp = self._split2dict(el.text)
+                # add hash to have a unique identifier for each configuration
+                md5hash = hashlib.md5(el.text.encode('utf-8')).hexdigest()
+                tmp[el.tag + 'Hash'] = md5hash
                 for key, value in tmp.items():
                     df_dict[key].append(value)
                     found_els.append(key)
@@ -330,10 +334,10 @@ class xml2df(OpenBenchMarking):
         system = ['Identifier', 'Hardware', 'Software', 'User', 'TimeStamp',
                   'TestClientVersion', 'Notes', 'JSON', 'System Layer']
         hardware = ['Processor', 'Motherboard', 'Chipset', 'Memory', 'Disk',
-                    'Graphics', 'Audio', 'Network', 'Monitor']
+                    'Graphics', 'Audio', 'Network', 'Monitor', 'HardwareHash']
         software = ['OS', 'Kernel', 'Desktop', 'Display Server',
                     'Display Driver', 'OpenGL', 'OpenCL', 'Vulkan', 'Compiler',
-                    'File-System', 'Screen Resolution']
+                    'File-System', 'Screen Resolution', 'SoftwareHash']
 
         cols_sys = system + hardware + software
         cols_sys.remove('Hardware')
@@ -480,7 +484,7 @@ class xml2df(OpenBenchMarking):
         return dict_res
 
 
-def download_from_openbm(search_string, save_xml=True, use_cache=True):
+def search_openbm(search_string, save_xml=True, use_cache=True):
     """
 
     Parameters
@@ -779,12 +783,12 @@ if __name__ == '__main__':
     xml = xml2df()
 
 #    search_string = 'RX 480'
-#    df = download_from_openbm(search_string, save_xml=False, use_cache=True)
+#    df = search_openbm(search_string, save_xml=False, use_cache=True)
 #    df.to_hdf(pjoin(xml.db_path, 'search_{}.h5'.format(search_string)), 'table')
 #    df.to_excel(pjoin(xml.db_path, 'search_{}.xlsx'.format(search_string)))
 #    df.to_csv(pjoin(xml.db_path, 'search_{}.csv'.format(search_string)))
 
-#    df = download_from_openbm(None, save_xml=True)
+#    df = search_openbm(None, save_xml=True)
 #    dd = date.today()
 #    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
 #    df.to_hdf(pjoin(xml.db_path, 'latest_{}.h5'.format(today)), 'table')
