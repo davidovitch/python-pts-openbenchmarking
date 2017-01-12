@@ -7,12 +7,14 @@ Created on Thu Jan  5 22:31:03 2017
 """
 
 from os.path import join as pjoin
+from datetime import date
 
 import numpy as np
 import pandas as pd
 
 from openbenchmarking import (EditXML, xml2df, explore_dataset, plot_barh,
-                              plot_barh_groups, download_from_openbm)
+                              plot_barh_groups, search_openbm,
+                              load_local_testids)
 
 
 def example_xml():
@@ -325,31 +327,47 @@ def example(search_string):
     plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
 
 
+def database():
+    """
+    """
+
+    # manual XML file changes:
+
+    # there is one case that has (Total Cores: 4) instead of (4 Cores)
+    # for the Processor tag.
+    # http://openbenchmarking.org/result/1108293-IV-ZAREASONL67
+
+
+    xml = xml2df()
+    df = pd.read_hdf(pjoin(xml.pts_local, 'database.h5'), 'table')
+
+    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor',
+                    min_cases=10)
+
+    sel = df[df['Processor'].str.startswith('Intel Core 2')]
+    for k in sorted(sel['ProcessorName'].unique()): print(k)
+
+
 if __name__ == '__main__':
 
-    dummy = None
     xml = xml2df()
 
-#    search_string = 'RX 480'
-    search_string = 'AMD FX-8120'
-    search_string = 'AMD FX-8350'
-    search_string = 'E3-1280'
-    df = download_from_openbm(search_string, save_xml=True)
-    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.pts_local, 'search_{}.xlsx'.format(search_string)))
-#    df.to_csv(pjoin(xml.pts_local, 'search_{}.csv'.format(search_string)))
+    # -------------------------------------------------------------------------
+    # MERGE ALL LOCALLY SAVED XML FILES INTO A DataFrame
+#    df, failed = load_local_testids()
+#    df.to_hdf(pjoin(xml.db_path, 'database.h5'), 'table')
+    # -------------------------------------------------------------------------
 
-#    df = download_from_openbm(None, save_xml=True)
-#    dd = date.today()
-#    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
-#    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
-
+    # -------------------------------------------------------------------------
 #    obm = xml2df()
+#    # load a locally saved testid XML file
 #    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
 #    obm.load(io)
-#    df_sys = obm.generated_system2df()
-#    df_res = obm.data_entry2df()
+#    dict_sys = obm.generated_system2dict()
+#    dict_res = obm.data_entry2dict()
 
 #    obm = xml2df()
-#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
-#    df = obm.convert(io)
+#    # download testid XML file from OpenBenchmarking
+#    obm.load_testid('1606281-HA-RX480LINU80')
+#    dict_sys = obm.generated_system2dict()
+#    dict_res = obm.data_entry2dict()
