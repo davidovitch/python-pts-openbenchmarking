@@ -27,6 +27,7 @@ class OpenBenchMarking:
     def __init__(self):
         self.pts_local = pjoin(os.environ['HOME'],
                                '.phoronix-test-suite/test-results/')
+        self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.url_search = 'http://openbenchmarking.org/s/{}&show_more'
         self.url_latest = 'http://openbenchmarking.org/results/latest'
@@ -246,7 +247,8 @@ class xml2df(OpenBenchMarking):
         """Convert following string to dictionary:
         key1: value1, key2: value2, ...
         """
-        elements = string.split(', ')
+        # some old cases have (Total Cores: #) instead of (# Cores)
+        elements = string.replace('Total Cores:', 'Total Cores').split(', ')
         return {k.split(':')[0]:k.split(':')[1] for k in elements}
 
     def _add2row(self, elements, columns, df_dict, missing_val=None,
@@ -564,7 +566,16 @@ def split_cpu_info(df):
     count_name.loc[nocount, 0] = 1
 
     df['ProcessorFrequency'] = freq[0].str.replace('GHz', '').astype(np.float32)
-    df['ProcessorCores'] = cores[0].astype(np.int16)
+    try:
+        df['ProcessorCores'] = cores[0].astype(np.int16)
+    except ValueError as e:
+        # some old results have: AMD Athlon @ 1.10GHz (Total Cores 1)
+        # note that the (Total Cores: 1) the colon has been removed in
+        # xml2df._split2dict earlier
+        sel = cores[0].str.find('Total') > -1
+        cores.loc[sel, 0] = freq[1].loc[sel].str.split('Cores ', expand=True)[1]
+        cores.loc[sel, 0] = cores.loc[sel, 0].str.replace(')', '')
+        df['ProcessorCores'] = cores[0].astype(np.int16)
     df['ProcessorCount'] = count_name[0].astype(np.int16)
     df['ProcessorName'] = count_name[1]
 
@@ -769,14 +780,14 @@ if __name__ == '__main__':
 
 #    search_string = 'RX 480'
 #    df = download_from_openbm(search_string, save_xml=False, use_cache=True)
-#    df.to_hdf(pjoin(xml.pts_local, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.pts_local, 'search_{}.xlsx'.format(search_string)))
-#    df.to_csv(pjoin(xml.pts_local, 'search_{}.csv'.format(search_string)))
+#    df.to_hdf(pjoin(xml.db_path, 'search_{}.h5'.format(search_string)), 'table')
+#    df.to_excel(pjoin(xml.db_path, 'search_{}.xlsx'.format(search_string)))
+#    df.to_csv(pjoin(xml.db_path, 'search_{}.csv'.format(search_string)))
 
 #    df = download_from_openbm(None, save_xml=True)
 #    dd = date.today()
 #    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
-#    df.to_hdf(pjoin(xml.pts_local, 'latest_{}.h5'.format(today)), 'table')
+#    df.to_hdf(pjoin(xml.db_path, 'latest_{}.h5'.format(today)), 'table')
 
 #    xml = xml2df()
 #    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")

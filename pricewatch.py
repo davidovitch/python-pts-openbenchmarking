@@ -23,7 +23,7 @@ class TweakersPricewatch:
         self.fpath = fpath
         xml = xml2df()
         if fpath is None:
-            self.fpath = pjoin(xml.pts_local, '..', 'tweakers-pricewatch.h5')
+            self.fpath = pjoin(xml.db_path, '..', 'tweakers-pricewatch.h5')
 
         self.df = pd.DataFrame()
         if os.path.isfile(self.fpath):
@@ -155,4 +155,3 @@ if __name__ == '__main__':
     #tree = fromstring(data['entities'][0]['minPrice'])
     #min_price = tree.cssselect('a')[0].text.split('€ ')[1]
     #min_price = fromstring(data['entities'][0]['minPrice']).text.split('€ ')[1]
-
