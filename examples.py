@@ -161,7 +161,7 @@ def example1_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.res_path, 'search_rx_470.h5'), 'table')
 
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
@@ -207,7 +207,7 @@ def example2_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.res_path, 'search_rx_470.h5'), 'table')
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
 
@@ -252,7 +252,7 @@ def example3_dataframe():
 
     # load previously donwload data
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.res_path, 'search_rx_470.h5'), 'table')
 
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
@@ -291,8 +291,11 @@ def example(search_string):
 
     # load previously donwload data
     xml = xml2df()
-#    df = pd.read_hdf(pjoin(xml.pts_local, 'search_rx_470.h5'), 'table')
-    df = download_from_openbm(search_string, save_xml=True)
+#    df = pd.read_hdf(pjoin(xml.res_path, 'search_rx_470.h5'), 'table')
+    testids = search_openbm(search_string, save_xml=True)
+
+    # TODO: create method to convert a list of testids into a DataFrame
+    # either load locally or from remote
 
     df.drop(xml.user_cols, inplace=True, axis=1)
     df.drop_duplicates(inplace=True)
@@ -339,7 +342,7 @@ def database():
 
 
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.pts_local, 'database.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.res_path, 'database.h5'), 'table')
 
     explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor',
                     min_cases=10)
@@ -361,7 +364,7 @@ if __name__ == '__main__':
     # -------------------------------------------------------------------------
 #    obm = xml2df()
 #    # load a locally saved testid XML file
-#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
+#    io = pjoin(obm.res_path, "1606281-HA-RX480LINU80/composite.xml")
 #    obm.load(io)
 #    dict_sys = obm.generated_system2dict()
 #    dict_res = obm.data_entry2dict()

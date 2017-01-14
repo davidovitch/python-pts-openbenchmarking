@@ -26,8 +26,8 @@ from matplotlib import pyplot as plt
 class OpenBenchMarking:
 
     def __init__(self):
-        self.pts_local = pjoin(os.environ['HOME'],
-                               '.phoronix-test-suite/test-results/')
+        self.pts_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
+        self.res_path = pjoin(self.pts_path, 'test-results/')
         self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.url_search = 'http://openbenchmarking.org/s/{}&show_more'
@@ -76,7 +76,7 @@ class OpenBenchMarking:
         return ids
 
     def write_testid_xml(self):
-        fpath = pjoin(self.pts_local, self.testid)
+        fpath = pjoin(self.res_path, self.testid)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
         fname = pjoin(fpath, 'composite.xml')
@@ -94,14 +94,14 @@ class EditXML(OpenBenchMarking):
         """
         self.root = etree.Element('PhoronixTestSuite')
         for test_result in list_test_results:
-            fpath = os.path.join(self.pts_local, test_result, 'composite.xml')
+            fpath = os.path.join(self.res_path, test_result, 'composite.xml')
             tree = etree.parse(fpath)
             root = tree.getroot()
 
     def write_local(self, test_result=None):
         if test_result is None:
             test_result = self.test_result
-        fpath = os.path.join(self.pts_local, test_result)
+        fpath = os.path.join(self.res_path, test_result)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
         fname = os.path.join(fpath, 'composite.xml')
@@ -518,10 +518,11 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
         print('found {} testids on search page'.format(nr_testids))
 
     # save list
-    fname = 'testids_{}.txt'.format(search_string)
+    fname = pjoin(xml.pts_path, 'openbenchmarking.org-searches',
+                  'testids_{}.txt'.format(search_string))
     np.savetxt(fname, np.array(testids, dtype=np.str), fmt='%22s')
 
-    fpath = os.path.join(xml.pts_local, '*')
+    fpath = os.path.join(xml.res_path, '*')
     testids_saved = set([os.path.basename(k) for k in glob(fpath)])
 
     # if cache is used, only download new cases
@@ -593,7 +594,7 @@ def load_local_testids():
     xml = xml2df()
 
     # make a list of all available test id folders
-    base = os.path.join(xml.pts_local, '*')
+    base = os.path.join(xml.res_path, '*')
     failed = []
 
     regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
@@ -604,7 +605,7 @@ def load_local_testids():
         regex.findall(testid)
         if len(regex.findall(testid)) != 1:
             continue
-        fpath = pjoin(xml.pts_local, testid, 'composite.xml')
+        fpath = pjoin(xml.res_path, testid, 'composite.xml')
         xml.load(fpath)
         xml.testid = testid
         i += 1
@@ -794,12 +795,12 @@ if __name__ == '__main__':
 #    df.to_hdf(pjoin(xml.db_path, 'latest_{}.h5'.format(today)), 'table')
 
 #    xml = xml2df()
-#    io = pjoin(xml.pts_local, "1510217-HA-BPPADOKA880/composite.xml")
+#    io = pjoin(xml.res_path, "1510217-HA-BPPADOKA880/composite.xml")
 #    xml.load(io)
 #    df_dict = xml.convert()
 #    dict_sys = xml.generated_system2dict()
 #    dict_res = xml.data_entry2dict()
 
 #    obm = xml2df()
-#    io = pjoin(obm.pts_local, "1606281-HA-RX480LINU80/composite.xml")
+#    io = pjoin(obm.res_path, "1606281-HA-RX480LINU80/composite.xml")
 #    df_dict = obm.convert(io)
