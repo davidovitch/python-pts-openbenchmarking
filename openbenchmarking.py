@@ -36,9 +36,16 @@ class OpenBenchMarking:
         self.testid = 'unknown'
         self.user_cols = ['User', 'SystemDescription', 'testid', 'Notes',
                           'SystemIdentifier', 'GeneratedTitle', 'LastModified']
+        self.testid_cache = None
 
-    def load_testid(self, testid):
+    def make_cache_set(self):
+        """Create set of all testids present in the res_path directory.
         """
+        fpath = os.path.join(self.res_path, '*')
+        self.testid_cache = set([os.path.basename(k) for k in glob(fpath)])
+
+    def load_testid_from_obm(self, testid, use_cache=True, save_xml=False):
+        """Download a given testid from OpenBenchmarking.org.
 
         Parameters
         ----------
@@ -47,7 +54,21 @@ class OpenBenchMarking:
             OpenBenchemarking.org testid, for example: 1606281-HA-RX480LINU80
         """
         self.testid = testid
-        self.load(self.url_base.format(testid))
+
+        if not use_cache:
+            self.testid_cache = set([])
+        elif self.testid_cache is None:
+            self.make_cache_set()
+
+        if testid not in self.testid_cache:
+            self.load(self.url_base.format(testid))
+            in_cache = False
+        else:
+            self.load(pjoin(self.res_path, testid, 'composite.xml'))
+            in_cache = True
+
+        if save_xml and not in_cache:
+            self.write_testid_xml()
 
     def load(self, io):
 
@@ -196,7 +217,7 @@ class xml2df(OpenBenchMarking):
         if io is not None:
             self.load(io)
         elif testid is not None:
-            self.load_testid(testid)
+            self.load_testid_from_obm(testid, use_cache=True)
 
     def _rename_dict_key(self, df_dict, rename):
         """rename a key in a dictionary"""
@@ -439,7 +460,7 @@ class xml2df(OpenBenchMarking):
             # some cases just have no result identifier and do not belong to
             # another test
             else:
-                res_id['ResultOf'] = 'no'
+                res_id['ResultOf'] = 'missing'
 
             # add each result to the collection
             tmp = {k:[] for k in data_entry}
@@ -522,12 +543,12 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
                   'testids_{}.txt'.format(search_string))
     np.savetxt(fname, np.array(testids, dtype=np.str), fmt='%22s')
 
-    fpath = os.path.join(xml.res_path, '*')
-    testids_saved = set([os.path.basename(k) for k in glob(fpath)])
+    # load the cache list
+    xml.make_cache_set()
 
     # if cache is used, only download new cases
     if use_cache:
-        testids = set(testids) - testids_saved
+        testids = set(testids) - xml.testid_cache
         nr_testids = len(testids)
         if nr_testids < 1:
             print('all testids have already been downloaded')
@@ -538,10 +559,7 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
 
     for testid in tqdm(testids):
         # download xml file
-        xml.load_testid(testid)
-        # save the original XML file
-        if save_xml:
-            xml.write_testid_xml()
+        xml.load_testid_from_obm(testid, use_cache=False, save_xml=save_xml)
 
     return testids
 
