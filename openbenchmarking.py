@@ -226,7 +226,7 @@ class xml2df(OpenBenchMarking):
             df_dict.pop(key)
         return df_dict
 
-    def convert(self):
+    def convert2dict(self):
         """Convert the loaded XML file into a DataFrame ready dictionary of
         lists.
         """
@@ -265,6 +265,48 @@ class xml2df(OpenBenchMarking):
 
         return dict_res
 
+    def convert2df(self, dict_res):
+        """Convert a df_dict to a DataFrame and convert columns to proper
+        c-type variable names and values.
+
+        RawString is a series of values separated by :
+        Value can be a series of values sperated by ,
+        """
+
+        # split the Value column into a float and array part
+        dict_res['ValueArray'] = []
+        for i, valstring in enumerate(dict_res['Value']):
+            valarray = np.fromstring(valstring, sep=',')
+            # if we have more then one element it is a series, otherwise
+            # just a single value
+            if len(valarray) > 1:
+                dict_res['Value'][i] = np.nan
+                dict_res['ValueArray'].append(valarray)
+            elif len(valarray)==0:
+                dict_res['Value'][i] = np.nan
+                dict_res['ValueArray'].append(np.array([np.nan]))
+            else:
+                dict_res['Value'][i] = valarray[0]
+                dict_res['ValueArray'].append(np.array([np.nan]))
+
+        # RawString will allways (?) hold more than one value
+        for i, valstring in enumerate(dict_res['RawString']):
+            # FIXME: reading empty field in xml is set to None seems?
+            if valstring is None:
+                valarray = np.array([np.nan])
+            else:
+                valarray = np.fromstring(valstring, sep=':')
+            dict_res['RawString'][i] = valarray
+
+        # convert to dataframe, set datatypes
+        df = pd.DataFrame(dict_res)
+
+        # convert all column names to c-name compatible
+        df.rename(columns=lambda x: x.replace('-', '').replace(' ', ''),
+                  inplace=True)
+
+        return df
+
     def _split2dict(self, string):
         """Convert following string to dictionary:
         key1: value1, key2: value2, ...
@@ -273,7 +315,7 @@ class xml2df(OpenBenchMarking):
         elements = string.replace('Total Cores:', 'Total Cores').split(', ')
         return {k.split(':')[0]:k.split(':')[1] for k in elements}
 
-    def _add2row(self, elements, columns, df_dict, missing_val=None,
+    def _add2row(self, elements, columns, df_dict, missing_val='',
                  rename={}):
         """
 
@@ -291,7 +333,7 @@ class xml2df(OpenBenchMarking):
         df_dict : dict
             pandas.DataFrame dictionary
 
-        missing_val : str, default=None
+        missing_val : str, default=''
             When an tag occurs in columns but not in elements, it is added to
             df_dict with missing_val as value. Rename is applied after the
             missing keys from columns are checked
@@ -302,7 +344,8 @@ class xml2df(OpenBenchMarking):
         df_dict : dict
             pandas.DataFrame dictionary with one added row for all the columns
             of the set columns. Elements should be a sub-set of columns.
-            Values occuring in columns but not in elements are added as None.
+            Values occuring in columns but not in elements are added with the
+            value as set in the missing_val variable.
 
         """
 
@@ -336,7 +379,7 @@ class xml2df(OpenBenchMarking):
 
         return df_dict
 
-    def generated_system2dict(self):
+    def generated_system2dict(self, missing_val=''):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
         the Generated and System tags to a Pandas DataFrame. This means that
         the data contained in the Generated tag will now be repeated for each
@@ -390,7 +433,7 @@ class xml2df(OpenBenchMarking):
         dict_gen = {el.tag : el.text for el in gen_elements[0]}
         # add empty values for possible missing keys
         for key in generated_set - set(dict_gen.keys()):
-            dict_gen[key] = None
+            dict_gen[key] = missing_val
         # also include the URL testid identifier which is unique for each
         # test entry on OpenBenchmarking.org
         dict_gen['testid'] = self.testid
@@ -420,7 +463,7 @@ class xml2df(OpenBenchMarking):
 
         return dict_sys
 
-    def data_entry2dict(self, missing_val=None):
+    def data_entry2dict(self, missing_val=''):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
         the Result tags to a Pandas DataFrame. This means that the data
         contained in the Result tag will now be replicated for each of the
@@ -629,7 +672,7 @@ def load_local_testids():
         i += 1
 
         try:
-            _df_dict = xml.convert()
+            _df_dict = xml.convert2dict()
         except Exception as e:
             print('')
             print('conversion to df_dict of {} failed.'.format(testid))
@@ -644,7 +687,7 @@ def load_local_testids():
 
         # Very expensive to append many DataFrames to an ever growing DataFrame
 #        try:
-#            df = df.append(xml.convert())
+#            df = df.append(xml.convert2dict())
 #            i += 1
 #        except Exception as e:
 #            failed.append(testid)
@@ -655,19 +698,24 @@ def load_local_testids():
 
     print('loaded {} xml files locally'.format(i))
 
-    df = pd.DataFrame(df_dict)
+    df = xml.convert2df(df_dict)
+#    df = pd.DataFrame(df_dict)
     del df_dict
     gc.collect()
 
     # create a new unique index
     df.index = np.arange(len(df))
 
+    # FIXME: is it safe to ignore array columns when looking for duplicates?
     # there are probably going to be more duplicates
-    df.drop_duplicates(inplace=True)
+    # doesn't work for ndarray columns
+    arraycols = set(['RawString', 'ValueArray'])
+    cols = list(set(df.columns) - arraycols)
+    df.drop_duplicates(inplace=True, subset=cols)
     # columns that can hold different values but still could refer to the same
     # test data. So basically all user defined columns should be ignored.
     # But do not drop the columns, just ignore them for de-duplication
-    cols = list(set(df.columns) - set(xml.user_cols))
+    cols = list(set(df.columns) - set(xml.user_cols) - arraycols)
     # mark True for values that are NOT duplicates
     df = df.loc[np.invert(df.duplicated(subset=cols).values)]
     # split the Processer column in Processor info, frequency and cores
@@ -676,9 +724,9 @@ def load_local_testids():
     # convert object columns to string, but leave other data types as is
     # ignore columns with very long strings to avoid out of memory errors
     # RawString and Value can contain a time series
-    ignore = set(['RawString', 'Value'])
+    ignore = set(['RawString', 'Value', 'ValueArray'])
     for col, dtype in df.dtypes.items():
-        if isinstance(dtype, object) and col not in ignore:
+        if dtype==np.object and col not in ignore:
             try:
                 df[col] = df[col].values.astype(np.str)
             except Exception as e:
@@ -687,11 +735,12 @@ def load_local_testids():
 
     # trim all columns
     for col in df:
-        df[col] = df[col].str.strip()
+        if df[col].dtype==np.object:
+            df[col] = df[col].str.strip()
 
     # remove all spaces in column names
-    new_cols = {k:k.replace(' ', '').replace('-', '') for k in df.columns}
-    df.rename(columns=new_cols, inplace=True)
+#    new_cols = {k:k.replace(' ', '').replace('-', '') for k in df.columns}
+#    df.rename(columns=new_cols, inplace=True)
 
     return df, failed
 
@@ -815,10 +864,10 @@ if __name__ == '__main__':
 #    xml = xml2df()
 #    io = pjoin(xml.res_path, "1510217-HA-BPPADOKA880/composite.xml")
 #    xml.load(io)
-#    df_dict = xml.convert()
+#    df_dict = xml.convert2dict()
 #    dict_sys = xml.generated_system2dict()
 #    dict_res = xml.data_entry2dict()
 
 #    obm = xml2df()
 #    io = pjoin(obm.res_path, "1606281-HA-RX480LINU80/composite.xml")
-#    df_dict = obm.convert(io)
+#    df_dict = obm.convert2dict(io)
