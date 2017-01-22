@@ -226,7 +226,7 @@ class xml2df(OpenBenchMarking):
             df_dict.pop(key)
         return df_dict
 
-    def convert2dict(self):
+    def xml2dict(self):
         """Convert the loaded XML file into a DataFrame ready dictionary of
         lists.
         """
@@ -265,7 +265,7 @@ class xml2df(OpenBenchMarking):
 
         return dict_res
 
-    def convert2df(self, dict_res):
+    def dict2df(self, dict_res):
         """Convert a df_dict to a DataFrame and convert columns to proper
         c-type variable names and values.
 
@@ -672,7 +672,7 @@ def load_local_testids():
         i += 1
 
         try:
-            _df_dict = xml.convert2dict()
+            _df_dict = xml.xml2dict()
         except Exception as e:
             print('')
             print('conversion to df_dict of {} failed.'.format(testid))
@@ -687,7 +687,7 @@ def load_local_testids():
 
         # Very expensive to append many DataFrames to an ever growing DataFrame
 #        try:
-#            df = df.append(xml.convert2dict())
+#            df = df.append(xml.xml2dict())
 #            i += 1
 #        except Exception as e:
 #            failed.append(testid)
@@ -698,7 +698,7 @@ def load_local_testids():
 
     print('loaded {} xml files locally'.format(i))
 
-    df = xml.convert2df(df_dict)
+    df = xml.dict2df(df_dict)
 #    df = pd.DataFrame(df_dict)
     del df_dict
     gc.collect()
@@ -864,10 +864,10 @@ if __name__ == '__main__':
 #    xml = xml2df()
 #    io = pjoin(xml.res_path, "1510217-HA-BPPADOKA880/composite.xml")
 #    xml.load(io)
-#    df_dict = xml.convert2dict()
+#    df_dict = xml.xml2dict()
 #    dict_sys = xml.generated_system2dict()
 #    dict_res = xml.data_entry2dict()
 
 #    obm = xml2df()
 #    io = pjoin(obm.res_path, "1606281-HA-RX480LINU80/composite.xml")
-#    df_dict = obm.convert2dict(io)
+#    df_dict = obm.xml2dict(io)
