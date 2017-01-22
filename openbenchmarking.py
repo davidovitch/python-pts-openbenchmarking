@@ -210,8 +210,24 @@ class EditXML(OpenBenchMarking):
 
 
 class xml2df(OpenBenchMarking):
+    """Class for converting a PTS/OpenBenchmarking.org XML result file into a
+    table formatted as a Pandas.DataFrame object.
+    """
 
     def __init__(self, io=None, testid=None):
+        """
+
+        Parameters
+        ----------
+
+        io : path, default=None
+            File path to the testid file to be loaded, or anything else that
+            lxml.etree.parse(io) can handle.
+
+        testid : str, default=None
+            testid of the result file to be loaded. If not available locally
+            it will be downloaded from OpenBenchmarking.org.
+        """
         super().__init__()
 
         if io is not None:
@@ -311,7 +327,7 @@ class xml2df(OpenBenchMarking):
         """Convert following string to dictionary:
         key1: value1, key2: value2, ...
         """
-        # some old cases have (Total Cores: #) instead of (# Cores)
+        # some old result files have (Total Cores: #) instead of (# Cores)
         elements = string.replace('Total Cores:', 'Total Cores').split(', ')
         return {k.split(':')[0]:k.split(':')[1] for k in elements}
 
@@ -356,6 +372,7 @@ class xml2df(OpenBenchMarking):
 
         for el in elements:
             if el.tag in self.hard_soft_tags:
+                # Here the columns HardwareHash and SoftwareHash are created.
                 # split the Hardware and Software tags into the columns
                 tmp = self._split2dict(el.text)
                 # add hash to have a unique identifier for each configuration
