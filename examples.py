@@ -14,7 +14,8 @@ import pandas as pd
 
 from openbenchmarking import (EditXML, xml2df, explore_dataset, plot_barh,
                               plot_barh_groups, search_openbm,
-                              load_local_testids)
+                              load_local_testids, find_items_in_field,
+                              find_results_with_items_in_field)
 
 
 def example_xml():
@@ -330,6 +331,104 @@ def example(search_string):
     plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
 
 
+def testA_vs_testB():
+    """Find the corrolation between two benchmark results
+    """
+
+    xml = xml2df()
+    df = pd.read_hdf(pjoin(xml.db_path, 'database.h5'), 'table')
+    df['ProcessorFrequency'] = df['ProcessorFrequency'].astype(str)
+    df['ProcessorFrequency'] = df['ProcessorFrequency'].str.replace('GHz', '')
+    df['ProcessorFrequency'] = df['ProcessorFrequency'].astype(np.float32)
+    resid1 = 'pts/graphics-magick-1.4.1'
+    resid2 = 'pts/c-ray-1.1.0'
+    sel = df[((df['ResultIdentifier']==resid1) |
+              (df['ResultIdentifier']==resid2)) & (df['ResultOf']=='no') &
+             (df['ProcessorFrequency']<20)]
+    sel = sel.copy()
+    sel['Value'] = sel['Value'].astype(np.float32)
+    sel['ProcessorCores'] = sel['ProcessorCores'].astype(np.float32)
+
+    test1, test2 = [], []
+    for hwhash, gr_hw in sel.groupby('HardwareHash'):
+        if len(gr_hw['ResultIdentifier'].unique()) < 2:
+            continue
+        print(hwhash)
+        for test, gr_test in gr_hw.groupby('ResultIdentifier'):
+            print('   ', test.ljust(30), '{: 3d}'.format(len(gr_test)),
+                  '{: 9.02f}'.format(gr_test['Value'].mean()),
+                  '{: 9.02f}'.format(gr_test['Value'].std()),
+                  '{: 9.02f}'.format(gr_test['Value'].min()),
+                  '{: 9.02f}'.format(gr_test['Value'].max()))
+
+    # create a pivot table
+    pivot = pd.pivot_table(sel, values='Value',
+                           index='HardwareHash',
+                           columns='ResultIdentifier')#,
+#                           aggfunc=[np.mean, np.std, np.min, np.max, np.sum])
+    # remove all harware configurations that only have one test result
+    data = pivot.dropna(axis=0)
+
+
+def cross_plot():
+
+    # create a plot like with joint distributions and their cross distributions
+
+    # for example: 25 systems, 21 tests
+    # http://openbenchmarking.org/result/1603119-GA-1401227SO30
+    # AMD vs Intel, non gaming
+    xml = xml2df()
+    testid = '1701157-RI-CLEARPATC00' # 2 systems, 11 tests
+    testid = '1603119-GA-1401227SO30' # 25 systems, 21 tests
+    xml.load_testid_from_obm(testid, save_xml=True, use_cache=True)
+    df_dict = xml.xml2dict()
+    df = xml.dict2df(df_dict)
+#    df = pd.DataFrame(df_dict)
+    pivot = pd.pivot_table(df, values='Value', index='SystemIdentifier',
+                           columns='ResultIdentifier')
+
+    # 73 systems, 23 tests
+    # games, 12/2016
+    # http://openbenchmarking.org/result/1612283-DARK-HD7950R28
+
+
+def find_hardware():
+    """Example to look for hardware and compare results from a given test
+    """
+
+    xml = xml2df()
+    df = pd.read_hdf(pjoin(xml.db_path, 'database.h5'), 'table')
+
+    field = 'ProcessorName'
+    search_items = ['4850e', 'x2 555']
+    df_sel = find_items_in_field(df, search_items, field)
+    # find tests for which we have all targets have a data point
+    resids = find_results_with_items_in_field(df_sel, search_items, field)
+
+    # list all results
+    for key, values in resids.items():
+        print(key)
+        for value in values:
+            print('    ', value)
+
+    explore_dataset(df_sel, 'ResultIdentifier', 'ResultDescription',
+                    'Processor', min_cases=2)
+
+    # plot a single ResultIdentifier. Note that this might contain several
+    # variations of the test, as defined in the ResultDescription
+    sel = df_sel[df_sel['ResultIdentifier']=='pts/encode-mp3-1.3.1']
+    fig, ax = plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
+
+    # plot all common results
+    for resid, values in resids.items():
+        sel1 = df_sel[df_sel['ResultIdentifier']==resid]
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            fig, ax = plot_barh_groups(sel2, 'Graphics', 'Processor',
+                                       label_xval='Value')
+            ax.set_title(resid + '\n' + resdescr)
+
+
 def database():
     """
     """
@@ -342,7 +441,7 @@ def database():
 
 
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.res_path, 'database.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.db_path, 'database.h5'), 'table')
 
     explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor',
                     min_cases=10)
