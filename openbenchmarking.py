@@ -791,6 +791,8 @@ def explore_dataset(df, label1, label2, label3, min_cases=3):
                 for grname3, gr3 in gr2.groupby(label3):
                     print(' '*8 + '{:5d} : {}'.format(len(gr3), grname3))
 
+    return df_tests
+
 
 # turn off upper axis tick labels, rotate the lower ones, etc
 #for ax in ax1, ax2, ax2t, ax3:
@@ -802,6 +804,74 @@ def explore_dataset(df, label1, label2, label3, min_cases=3):
 #            label.set_rotation(30)
 #            label.set_horizontalalignment('right')
 #    ax.fmt_xdata = mdates.DateFormatter('%Y-%m-%d')
+
+
+def find_items_in_field(df, search_items, field):
+    """Find those data points for which field contains any item in search_items
+
+    Parameters
+    ----------
+
+    df : pd.DataFrame
+
+    search_items : list
+
+    field : str
+
+    Returns
+    -------
+
+    df_sel : pd.DataFrame
+        Selection of the results that contain results that contains any entry
+        defined in search_items.
+
+    """
+
+    locsel = False
+    for item in search_items:
+        ksel = (df[field].str.lower().str.find(item) > -1).values
+        df['%s %s' % (field, item)] = ksel
+        locsel += ksel
+    return df.loc[locsel]
+
+
+def find_results_with_items_in_field(df, search_items, field):
+    """Find the tests that contain results for all search parameters.
+    ResultIdentifier's equal to None are ignore. Requires find_items to be
+    run first because it relies on the added columns of find_i.
+
+    Parameters
+    ----------
+
+    df : pd.DataFrame
+
+    search_items : list
+
+    field : str
+
+    Returns
+    -------
+
+    resids : dict
+        Dictionary with ResultIdentifier as key and a list of
+        ResultDescription's as value.
+    """
+
+    # find tests for which all search_items have a data point
+    resids = {}
+    for resid, gr_resid in df.groupby('ResultIdentifier'):
+        if resid == 'None': continue
+        for resdesc, gr_resdesc in gr_resid.groupby('ResultDescription'):
+            gpu_found = []
+            for i in search_items:
+                gpu_found.append(gr_resdesc['%s %s' % (field, i)].values.any())
+            if set(gpu_found) == set([True]):
+                if resid in resids:
+                    resids[resid].append(resdesc)
+                else:
+                    resids[resid] = [resdesc]
+
+    return resids
 
 
 def plot_barh(df, label_yval, label_xval='Value'):
@@ -851,7 +921,7 @@ def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
         # write the label_yval into the bar
         for y, label in zip(gr_yticks, gr[label_yval].values.astype(str)):
             ax.text(0, y, label, fontsize=8, verticalalignment='center',
-                    horizontalalignment='left', color='w')
+                    horizontalalignment='left', color='k')
 
         y0 += (len(gr) + gr_spacing)
 
