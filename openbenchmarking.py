@@ -25,6 +25,9 @@ from matplotlib import pyplot as plt
 
 class OpenBenchMarking:
 
+    # add an optional HTML header when downloading content with urllib
+    header = {}
+
     def __init__(self):
         self.pts_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
         self.res_path = pjoin(self.pts_path, 'test-results/')
@@ -84,7 +87,10 @@ class OpenBenchMarking:
             url = self.url_latest
         else:
             url = self.url_search.format(search_string)
-        response = urllib.request.urlopen(urllib.parse.quote(url, safe='/:'))
+        url = urllib.parse.quote(url, safe='/:')
+        req = urllib.request.Request(url=url, headers=self.header)
+        response = urllib.request.urlopen(req)
+
         data = response.read()      # a bytes object
         text = data.decode('utf-8') # str; can't be used if data is binary
 
@@ -248,16 +254,15 @@ class xml2df(OpenBenchMarking):
         """
 
         dict_sys = self.generated_system2dict()
-        rename = {'Description':'SystemDescription',
-                  'Identifier':'SystemIdentifier',
-                  'JSON':'SystemJSON',
+        rename = {'Identifier':'SystemIdentifier',
                   'Title':'GeneratedTitle'}
+                  #'JSON':'SystemJSON', 'Description':'GeneratedDescription',
         dict_sys = self._rename_dict_key(dict_sys, rename)
 
         dict_res = self.data_entry2dict()
-        rename = {'Description':'ResultDescription',
+        rename = {'JSON':'DataEntryJSON',
+                  'Description':'ResultDescription',
                   'Identifier':'ResultIdentifier',
-                  'JSON':'DataEntryJSON',
                   'Title':'ResultTitle'}
         dict_res = self._rename_dict_key(dict_res, rename)
 
@@ -332,7 +337,7 @@ class xml2df(OpenBenchMarking):
         return {k.split(':')[0]:k.split(':')[1] for k in elements}
 
     def _add2row(self, elements, columns, df_dict, missing_val='',
-                 rename={}):
+                 rename={}, ignore=set([])):
         """
 
         Elements with the tag Hardware and Software are split into multiple
@@ -354,6 +359,11 @@ class xml2df(OpenBenchMarking):
             df_dict with missing_val as value. Rename is applied after the
             missing keys from columns are checked
 
+        rename : dict, default={}
+
+        ignore : set, default=set([])
+            Ignore elements.
+
         Returns
         ------
 
@@ -371,6 +381,9 @@ class xml2df(OpenBenchMarking):
         found_els = []
 
         for el in elements:
+            if el.tag in ignore:
+                continue
+            # TODO: should be like split_info methods for cpu, gpu, memory
             if el.tag in self.hard_soft_tags:
                 # Here the columns HardwareHash and SoftwareHash are created.
                 # split the Hardware and Software tags into the columns
@@ -407,13 +420,21 @@ class xml2df(OpenBenchMarking):
 
         The Hardware and Software tags are split into multiple columns to
         facilitate a more fine grained searching and selection process.
+
+        Following columns are ignored from the Generated group to avoid too
+        long column values: Description
+
+        Following columns are ingored from the System group to avoid too long
+        columns values: JSON
         """
 
         generated = ['Title', 'LastModified', 'TestClient', 'Description',
                      'Notes', 'InternalTags', 'ReferenceID',
                      'PreSetEnvironmentVariables']
+        gen_ignore = set(['Description'])
         system = ['Identifier', 'Hardware', 'Software', 'User', 'TimeStamp',
                   'TestClientVersion', 'Notes', 'JSON', 'System Layer']
+        sys_ignore = set(['JSON']) # 'Notes'
         hardware = ['Processor', 'Motherboard', 'Chipset', 'Memory', 'Disk',
                     'Graphics', 'Audio', 'Network', 'Monitor', 'HardwareHash']
         software = ['OS', 'Kernel', 'Desktop', 'Display Server',
@@ -421,10 +442,13 @@ class xml2df(OpenBenchMarking):
                     'File-System', 'Screen Resolution', 'SoftwareHash']
 
         cols_sys = system + hardware + software
+        # Remove columns we do not want to use because they are too long
         cols_sys.remove('Hardware')
         cols_sys.remove('Software')
+        for k in sys_ignore:
+            cols_sys.remove(k)
 
-        generated_set = set(generated)
+        generated_set = set(generated) - set(gen_ignore)
         system_set = set(cols_sys)
 #        hardware_set = set(hardware)
 #        software_set = set(software)
@@ -445,9 +469,14 @@ class xml2df(OpenBenchMarking):
 
         # there should only be one Generated element
         gen_elements = self.root.findall('Generated')
+        # FIXME: data checks should take place in a xml check method/class!
         assert len(gen_elements) == 1
+        # create dictionary of the tags/values in Generated
+        dict_gen = {el.tag : el.text for el in gen_elements[0]
+                    if el.tag not in gen_ignore}
+        # Are there any suprises in the tags? Tags we haven't seen before?
+        assert len(dict_gen.keys() - (generated_set | gen_ignore)) == 0
 
-        dict_gen = {el.tag : el.text for el in gen_elements[0]}
         # add empty values for possible missing keys
         for key in generated_set - set(dict_gen.keys()):
             dict_gen[key] = missing_val
@@ -458,7 +487,8 @@ class xml2df(OpenBenchMarking):
         # For each system create a row in the df_dict
         systems = self.root.findall('System')
         for sys_els in systems:
-            dict_sys = self._add2row(sys_els, system_set, dict_sys)
+            dict_sys = self._add2row(sys_els, system_set, dict_sys,
+                                     ignore=sys_ignore)
 
         # sanity checks
         for key, value in dict_sys.items():
@@ -469,6 +499,7 @@ class xml2df(OpenBenchMarking):
 
         # expand with the same values for Generated columns, this duplication
         # of data will make searching/selecting in the DataFrame later easier
+        # FIXME: data duplication of the Generated tags for all test runs
         for key, value in dict_gen.items():
             dict_sys[key] = [value]*len(systems)
 
@@ -478,7 +509,7 @@ class xml2df(OpenBenchMarking):
         # the indices for Identifier in Results/Data/Entry
         self.ids = {key:i for i,key in enumerate(dict_sys['Identifier'])}
 
-        return dict_sys
+        return dict_sys#, dict_gen
 
     def data_entry2dict(self, missing_val=''):
         """For a given xml result file from pts/OpenBenchmarking.org, convert
@@ -491,19 +522,21 @@ class xml2df(OpenBenchMarking):
         # ResultOf is not defined in the XML source.
         result = ['Identifier', 'Title', 'AppVersion', 'Arguments', 'ResultOf',
                   'Description', 'Scale', 'Proportion', 'DisplayFormat']
+        res_ignore = set([]) # 'Arguments', 'Description'
         data_entry = ['Identifier', 'Value', 'RawString', 'JSON']
-        data_entry_ = ['DataEntryIdentifier'] + data_entry[1:]
-        data_set = set(data_entry)
+        dat_ignore = set([]) # 'JSON'
+        data_entry_ = set(['DataEntryIdentifier'] + data_entry[1:]) - dat_ignore
+        data_set = set(data_entry) - dat_ignore
         rename = {'Identifier':'DataEntryIdentifier'}
 
-        dict_res = {k:[] for k in result+data_entry_}
+        dict_res = {k:[] for k in set(result) - res_ignore | data_entry_}
 
         res_elements = list(self.root.findall('Result'))
 
         res_title = ''
         for res_el in res_elements:
             # get all the details of the test in question
-            res_id = {k.tag:k.text for k in res_el}
+            res_id = {k.tag:k.text for k in res_el if k.tag not in res_ignore}
             res_id.pop('Data')
             data_entries = res_el.find('Data')
             # if the result identifier is empty, it corresponds to the previous
@@ -520,18 +553,19 @@ class xml2df(OpenBenchMarking):
             # some cases just have no result identifier and do not belong to
             # another test
             else:
-                res_id['ResultOf'] = 'missing'
+                res_id['ResultOf'] = 'na'
 
             # add each result to the collection
-            tmp = {k:[] for k in data_entry}
+            tmp = {k:[] for k in data_set}
             for entry in data_entries:
-                tmp = self._add2row(entry, data_set, tmp)
+                tmp = self._add2row(entry, data_set, tmp, ignore=dat_ignore)
             # before merging, rename Identifier
             tmp = self._rename_dict_key(tmp, rename)
             # add with the rest
             for key, value in tmp.items():
                 dict_res[key].extend(value)
             # and add the Result element columns to all the data entries
+            # FIXME: Data duplication for of the Result tags for each run
             for key, value in res_id.items():
                 dict_res[key].extend([value]*len(data_entries))
 
@@ -563,6 +597,14 @@ class xml2df(OpenBenchMarking):
 #            print(key.rjust(28), len(value))
 
         return dict_res
+
+
+class DataBase:
+
+    def __init__(self):
+        self.regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
+        self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
+
 
 
 def search_openbm(search_string, save_xml=True, use_cache=True):
@@ -599,9 +641,11 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
         print('found {} testids on search page'.format(nr_testids))
 
     # save list
-    fname = pjoin(xml.pts_path, 'openbenchmarking.org-searches',
-                  'testids_{}.txt'.format(search_string))
-    np.savetxt(fname, np.array(testids, dtype=np.str), fmt='%22s')
+    if search_string is None:
+        search_string = 'latest'
+    fname = 'testids_{}.txt'.format(search_string.replace('/', '_slash_'))
+    fpath = pjoin(xml.pts_path, 'openbenchmarking.org-searches', fname)
+    np.savetxt(fpath, np.array(testids, dtype=np.str), fmt='%22s')
 
     # load the cache list
     xml.make_cache_set()
@@ -655,9 +699,13 @@ def split_cpu_info(df):
         # some old results have: AMD Athlon @ 1.10GHz (Total Cores 1)
         # note that the (Total Cores: 1) the colon has been removed in
         # xml2df._split2dict earlier
-        sel = cores[0].str.find('Total') > -1
+        sel = cores[0].str.contains('Total').values.astype(bool)
         cores.loc[sel, 0] = freq[1].loc[sel].str.split('Cores ', expand=True)[1]
         cores.loc[sel, 0] = cores.loc[sel, 0].str.replace(')', '')
+        # we might have None values if nothing has been found in any of the
+        # above steps. None only gets converted to nan via float32, not int16
+        cores[0] = cores[0].astype(np.float32)
+        cores.loc[np.isnan(cores[0].values), 0] = -1
         df['ProcessorCores'] = cores[0].astype(np.int16)
     df['ProcessorCount'] = count_name[0].astype(np.int16)
     df['ProcessorName'] = count_name[1]
@@ -665,11 +713,115 @@ def split_cpu_info(df):
     return df
 
 
-def load_local_testids():
+def split_gpu_info(graphics):
+    """Graphics tag contains optionally additionall information.
+
+    AMD Radeon HD 6450/7450/8450 / R5 230 OEM 1024MB (625/800MHz)
+    MSI AMD Radeon R7 370 / R9 270/370 OEM 4096MB (350/1400MHz)
+    AMD Radeon HD 6770 1024MB (850/1200MHz)
+    ATI Radeon HD 5450 512MB (650/333MHz)
+    AMD Radeon HD 5450 (650/400MHz)
+    Sapphire AMD Radeon HD 5450 512MB (650/400MHz)
+    Gigabyte AMD Radeon HD 6450/7450/8450 / R5 230 OEM 1024MB
+    ATI Radeon HD 5450 ATI Radeon HD 4290 CrossFire 1024MBMB (650/667MHz)
+    (1150MHz)
+    (450/532MHz)
+    1 x ATI Radeon HD 4870 X2 1024MB CrossFire (750/900MHz)
+    1024MB (400/399MHz)
+    2 x AMD Radeon HD 6800 1024MB CrossFire (790/1000MHz)
+    AMD FireGL V5600 512MB (800/1100MHz)
+    AMD FirePro 2270
+    XFX AMD Radeon HD 5000/6000/7350/8350 1024MB
+
+    MSI NVIDIA GeForce GTX 460 768MB (675/1804MHz)
+    MSI NVIDIA GeForce GTX 550 Ti 1024MB (50/135MHz)
+    NVIDIA GeForce GT 220 /3DNOW! 1024MB (625/405MHz)
+    NVIDIA GeForce GT 440/PCIe/SSE2 1024MB (810/900MHz)
+    """
+
+    '?:([0-9])(?: x ))?'
+    '([a-zA-Z]*) ?'
+    '(ATI|AMD|NVIDIA)? ?'
+    '(R[0-9]|Radeon(?: HD)?(?: R[0-9])?|FireGL|FirePro|GeForce( GTX| GT)?) ?'
+    '((([A-Z]?[0-9]{3,4}( Ti)?)\/?){0,4})'
+    '*(OEM)* *(CrossFire)* *'
+    '([0-9]*MB|MBMB|GB)* *'
+    '(CrossFire)* *'
+    '(\((([0-9]*)/([0-9]*))MHz\))*'
+
+
+    x1 = r'(?:([0-9])(?: x ))?'
+    brand = r'([a-zA-Z]*) ?'
+    chip = r'(ATI|AMD|NVIDIA) ?'
+    series = r'(R[0-9]|Radeon(?: HD)?(?: R[0-9])?|FireGL|FirePro|'\
+             r'GeForce(?: GTX| GT)?) ?'
+    productid = r'((?:(?:[A-Z]?[0-9]{3,4}(?: Ti)?)\/?){0,4})'
+    p2 = r' *(OEM)* *(CrossFire)* ?'
+    memory = r'(?:([0-9]*MB|MBMB|GB) )?'
+    p2 = r'(CrossFire)* *'
+    freq = r'(?:\((?:([0-9]*)/([0-9]*))MHz\))*'
+    regex = re.compile(x1+brand+chip+series+productid+p2+memory+p2+freq)
+    r2 = re.compile(series)
+    r2.findall('R[0-9]')
+
+    q='1 x MSI ATI Radeon HD 4870 1024MB CrossFire (750/900MHz)'
+    q='Gigabyte AMD Radeon HD 6450/7450/8450 OEM / R5 230 OEM 1024MB'
+
+    for k in q.split(' / '):
+        print(regex.findall(k))
+
+    if graphics.find('Radeon HD') > -1:
+        chip = 'AMD'
+        vendor = graphics.split('Radeon HD')[0].replace('AMD').replace('ATI')
+
+
+def split_memory_info():
+    """
+    1 x 8192 MB DDR3-1600MHz RMT3160ME68FAF1600
+    1 x 8192 MB DDR3-1600MHz Kingston
+    1 x 8192 MB DDR3-1600MHz Kingston KHX1600C9S3L
+    1 x 8192 MB DDR4-2400MHz
+    1 x 8192 MB DRAM
+    1 x 8192 MB RAM
+    1 x 8192 MB RAM QEMU
+    1 x 16384 MB 2133MHz
+    1024 MB + 256 MB + 256 MB + 512 MB DDR-266MHz
+    2 GB + 2 GB + 4 GB + 4 GB DDR3-1333MHz
+    MB
+    Unknown + 16384 MB + Unknown + Unknown + Unknown + Unknown DDR3
+    x 0 DDR2-667MHz
+    x 0 Empty-Empty
+    """
+    pass
+
+
+def load_local_testids(df=None):
     """Load all local test id xml files and merge into one pandas.DataFrame.
+
+    Parameters
+    ----------
+
+    df : pandas.DataFrame, default=None
+        Optionally pass along existing database, only look for new cases to
+        add.
+
+    Returns
+    -------
+
+    df : pandas.DataFrame
+        testid's converted to df format, joined with optionally previously
+        converted results
+
+    failed : list
+        list of testid's that failed xml2df.xml2dict() conversion
+
     """
     df_dict = None
     xml = xml2df()
+
+    ignore = set([])
+    if df is not None:
+        ignore = set(df['testid'])
 
     # make a list of all available test id folders
     base = os.path.join(xml.res_path, '*')
@@ -679,9 +831,15 @@ def load_local_testids():
     i = 0
 
     for fpath in tqdm(glob(base)):
+
+#        if i > 20:
+#            break
+
         testid = os.path.basename(fpath)
         regex.findall(testid)
         if len(regex.findall(testid)) != 1:
+            continue
+        if testid in ignore:
             continue
         fpath = pjoin(xml.res_path, testid, 'composite.xml')
         xml.load(fpath)
@@ -715,6 +873,7 @@ def load_local_testids():
 
     print('loaded {} xml files locally'.format(i))
 
+#    df = pd.concat([df, xml.dict2df(df_dict)], ignore_index=True)
     df = xml.dict2df(df_dict)
 #    df = pd.DataFrame(df_dict)
     del df_dict
@@ -738,17 +897,25 @@ def load_local_testids():
     # split the Processer column in Processor info, frequency and cores
     df = split_cpu_info(df)
 
+    # trim all columns
+    for col in df:
+        if df[col].dtype==np.object:
+            df[col] = df[col].str.strip()
+
     # convert object columns to string, but leave other data types as is
     # ignore columns with very long strings to avoid out of memory errors
-    # RawString and Value can contain a time series
-    ignore = set(['RawString', 'Value', 'ValueArray'])
+    # RawString and ValueArray can contain a time series
+    ignore = set(['Value']) | arraycols
     for col, dtype in df.dtypes.items():
         if dtype==np.object and col not in ignore:
             try:
+#                df[col] = df[col].astype('category')
                 df[col] = df[col].values.astype(np.str)
             except Exception as e:
                 print(col)
                 raise e
+#    # leave array data in different dataframe
+#    df_arr = df[['testid', 'ValueArray', 'Rawstring']]
 
     # trim all columns
     for col in df:
@@ -765,11 +932,12 @@ def load_local_testids():
 def explore_dataset(df, label1, label2, label3, min_cases=3):
 
     # how many cases per test, and how many per resolution
-    df_dict = {'nr':[], 'test':[]}
+    df_dict = {'nr':[], 'l1-l2':[]}
 
-    for grname, gr in df.groupby(label1):
-        df_dict['nr'].append(len(gr))
-        df_dict['test'].append(grname)
+    for l1, gr1 in df.groupby(label1):
+        for l2, gr2 in gr1.groupby(label2):
+            df_dict['nr'].append(len(gr2))
+            df_dict['l1-l2'].append(l1 + ' // ' + l2)
 #        print('{:5d} : {}'.format(len(gr), grname))
 
     df_tests = pd.DataFrame(df_dict)
@@ -778,8 +946,9 @@ def explore_dataset(df, label1, label2, label3, min_cases=3):
     print('top 10 in nr of cases per {}'.format(label1))
     print(df_tests[-10:])
 
-    for col in df_tests['test']:
-        df_sel = df[df[label1]==col]
+    for col in df_tests['l1-l2']:
+        l1 = col.split(' // ')[0]
+        df_sel = df[df[label1]==l1]
 #        print()
 #        print('{:5d} : {}'.format(len(df_sel), col))
         for grname2, gr2 in df_sel.groupby(label2):
@@ -829,13 +998,15 @@ def find_items_in_field(df, search_items, field):
 
     locsel = False
     for item in search_items:
-        ksel = (df[field].str.lower().str.find(item) > -1).values
+        ksel = df[field].str.contains(item, case=False).values
         df['%s %s' % (field, item)] = ksel
         locsel += ksel
     return df.loc[locsel]
 
 
-def find_results_with_items_in_field(df, search_items, field):
+def find_results_with_items_in_field(df, search_items, field,
+                                     gr1='ResultIdentifier',
+                                     gr2='ResultDescription'):
     """Find the tests that contain results for all search parameters.
     ResultIdentifier's equal to None are ignore. Requires find_items to be
     run first because it relies on the added columns of find_i.
@@ -859,9 +1030,9 @@ def find_results_with_items_in_field(df, search_items, field):
 
     # find tests for which all search_items have a data point
     resids = {}
-    for resid, gr_resid in df.groupby('ResultIdentifier'):
+    for resid, gr_resid in df.groupby(gr1):
         if resid == 'None': continue
-        for resdesc, gr_resdesc in gr_resid.groupby('ResultDescription'):
+        for resdesc, gr_resdesc in gr_resid.groupby(gr2):
             gpu_found = []
             for i in search_items:
                 gpu_found.append(gr_resdesc['%s %s' % (field, i)].values.any())
@@ -888,12 +1059,15 @@ def plot_barh(df, label_yval, label_xval='Value'):
     ax.set_yticks(yticks)
     ax.set_yticklabels(df[label_yval].values.astype(str))
     ax.set_ylim(-height/2, yticks[-1] + height/2)
-    fig.tight_layout()
+#    fig.tight_layout()
 
     return fig, ax
 
 
 def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
+
+    if len(df) < 1:
+        return None, None
 
     fig_heigth_inches = len(df) * (6/15)
     figsize = (12, fig_heigth_inches)
