@@ -11,6 +11,7 @@ from glob import glob
 import re
 import gc
 import hashlib
+import json
 
 from lxml.html import fromstring
 from lxml import etree
@@ -30,7 +31,7 @@ class OpenBenchMarking:
 
     def __init__(self):
         self.pts_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
-        self.res_path = pjoin(self.pts_path, 'test-results/')
+        self.res_path = pjoin(self.pts_path, 'test-results-all-obm/')
         self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.url_search = 'http://openbenchmarking.org/s/{}&show_more'
@@ -286,6 +287,58 @@ class xml2df(OpenBenchMarking):
 
         return dict_res
 
+    def xml2dict_split(self):
+        """Convert the loaded XML file into a DataFrame ready dictionary of
+        lists, but keep system and results separate and create a unique
+        overlapping index.
+        """
+
+        dict_sys = self.generated_system2dict() #maxlen=200
+        rename = {'Identifier':'SystemIdentifier',
+                  'Title':'GeneratedTitle'}
+                  #'JSON':'SystemJSON', 'Description':'GeneratedDescription',
+        dict_sys = self._rename_dict_key(dict_sys, rename)
+        maxlens = {'Memory' : 100,
+                   'Disk' : 100}
+        dict_sys = self._trim_cell_len(dict_sys, maxlens)
+
+        dict_res = self.data_entry2dict() #maxlen=60
+        dict_res = split_json(dict_res)
+        rename = {'Description':'ResultDescription',
+                  'Identifier':'ResultIdentifier',
+                  'Title':'ResultTitle',
+                  'compiler':'DataEntryCompiler',
+                  'compiler-type':'DataEntryCompilerType',
+                  'max-result':'DataEntryMaxResult',
+                  'min-result':'DataEntryMinResult'}
+        dict_res = self._rename_dict_key(dict_res, rename)
+        maxlens = {'AppVersion' : 50,
+                   'Scale' : 50}
+        dict_res = self._trim_cell_len(dict_res, maxlens)
+
+        # prepare full length but empty SystemHash column in dict_sys
+        nr_systems = len(dict_sys['SystemIdentifier'])
+        dict_sys['SystemHash'] = ['']*nr_systems
+        # Add a system hash column for each row
+        text = ''
+        for irow in range(nr_systems):
+            text = ''
+            for col in dict_sys.keys():
+                text += str(dict_sys[col][irow])
+            md5hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+            dict_sys['SystemHash'][irow] = md5hash
+
+        # add SystemHash column to results
+        dict_res['SystemHash'] = []
+
+        # for each data result entry, add the system col values
+        for sys_index in dict_res['SystemIndex']:
+            md5hash = dict_sys['SystemHash'][sys_index]
+            dict_res['SystemHash'].append(md5hash)
+        dict_res.pop('SystemIndex')
+
+        return dict_res, dict_sys
+
     def dict2df(self, dict_res):
         """Convert a df_dict to a DataFrame and convert columns to proper
         c-type variable names and values.
@@ -295,29 +348,33 @@ class xml2df(OpenBenchMarking):
         """
 
         # split the Value column into a float and array part
-        dict_res['ValueArray'] = []
-        for i, valstring in enumerate(dict_res['Value']):
-            valarray = np.fromstring(valstring, sep=',')
-            # if we have more then one element it is a series, otherwise
-            # just a single value
-            if len(valarray) > 1:
-                dict_res['Value'][i] = np.nan
-                dict_res['ValueArray'].append(valarray)
-            elif len(valarray)==0:
-                dict_res['Value'][i] = np.nan
-                dict_res['ValueArray'].append(np.array([np.nan]))
-            else:
-                dict_res['Value'][i] = valarray[0]
-                dict_res['ValueArray'].append(np.array([np.nan]))
+        if 'Value' in dict_res:
+            dict_res['ValueArray'] = []
+            for i, valstring in enumerate(dict_res['Value']):
+                if valstring is None:
+                    valstring = ''
+                valarray = np.fromstring(valstring, sep=',')
+                # if we have more then one element it is a series, otherwise
+                # just a single value
+                if len(valarray) > 1:
+                    dict_res['Value'][i] = np.nan
+                    dict_res['ValueArray'].append(valarray)
+                elif len(valarray)==0:
+                    dict_res['Value'][i] = np.nan
+                    dict_res['ValueArray'].append(np.array([np.nan]))
+                else:
+                    dict_res['Value'][i] = valarray[0]
+                    dict_res['ValueArray'].append(np.array([np.nan]))
 
         # RawString will allways (?) hold more than one value
-        for i, valstring in enumerate(dict_res['RawString']):
-            # FIXME: reading empty field in xml is set to None seems?
-            if valstring is None:
-                valarray = np.array([np.nan])
-            else:
-                valarray = np.fromstring(valstring, sep=':')
-            dict_res['RawString'][i] = valarray
+        if 'RawString' in dict_res:
+            for i, valstring in enumerate(dict_res['RawString']):
+                # FIXME: reading empty field in xml is set to None seems?
+                if valstring is None:
+                    valarray = np.array([np.nan])
+                else:
+                    valarray = np.fromstring(valstring, sep=':')
+                dict_res['RawString'][i] = valarray
 
         # convert to dataframe, set datatypes
         df = pd.DataFrame(dict_res)
@@ -407,6 +464,16 @@ class xml2df(OpenBenchMarking):
             df_dict[value] = df_dict[key]
             df_dict.pop(key)
 
+        return df_dict
+
+    def _trim_cell_len(self, df_dict, maxlens):
+        """Trim maximum length of a certain columns/cells
+        """
+        col0 = list(df_dict.keys())[0]
+        for i in range(len(df_dict[col0])):
+            for col, maxlen in maxlens.items():
+                if isinstance(df_dict[col][i], str):
+                    df_dict[col][i] = df_dict[col][i][:maxlen]
         return df_dict
 
     def generated_system2dict(self, missing_val=''):
@@ -522,9 +589,9 @@ class xml2df(OpenBenchMarking):
         # ResultOf is not defined in the XML source.
         result = ['Identifier', 'Title', 'AppVersion', 'Arguments', 'ResultOf',
                   'Description', 'Scale', 'Proportion', 'DisplayFormat']
-        res_ignore = set([]) # 'Arguments', 'Description'
+        res_ignore = set(['Arguments']) # , 'Description'
         data_entry = ['Identifier', 'Value', 'RawString', 'JSON']
-        dat_ignore = set([]) # 'JSON'
+        dat_ignore = set([])#'JSON'])
         data_entry_ = set(['DataEntryIdentifier'] + data_entry[1:]) - dat_ignore
         data_set = set(data_entry) - dat_ignore
         rename = {'Identifier':'DataEntryIdentifier'}
@@ -604,7 +671,198 @@ class DataBase:
     def __init__(self):
         self.regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
         self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
+        self.xml = xml2df()
 
+    def load(self):
+
+        fname = pjoin(self.xml.db_path, 'database_results.h5')
+        df = pd.read_hdf(fname, 'table')
+        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+        df_sys = pd.read_hdf(fname, 'table')
+
+        return df, df_sys
+
+    def get_hdf_stores(self):
+        fname = pjoin(self.xml.db_path, 'database_results.h5')
+        self.store = pd.HDFStore(fname, mode='a', format='table',
+                                 complib='blosc', compression=9)
+        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+        self.store_sys = pd.HDFStore(fname, mode='a', format='table',
+                                     complib='blosc', compression=9)
+
+    def build(self):
+        """Build complete database from scratch
+        """
+
+        df_dict, df_dict_sys = self.testids2dict()
+
+        df = self.xml.dict2df(df_dict)
+        df = self.cleanup(df)
+
+        fname = pjoin(self.xml.db_path, 'database_results.h5')
+#        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
+        df.to_hdf(fname, 'table', format='table', complib='blosc',
+                  compression=9)
+        del df_dict
+        del df
+        gc.collect()
+
+        df = self.xml.dict2df(df_dict_sys)
+        df = self.cleanup(df)
+        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+#        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
+        df.to_hdf(fname, 'table', format='table', complib='blosc',
+                  compression=9)
+        del df_dict_sys
+        del df
+        gc.collect()
+
+    def update(self, testids=None):
+        """Load existing database and add testids that haven't been added.
+        """
+        df, df_sys = self.load()
+
+        if testids is None:
+            # already included testid's
+            testids_df = set(df_sys['testid'].unique())
+            # all downloaded testids
+            base = os.path.join(self.xml.res_path, '*')
+            testids_disk = set([os.path.basename(k) for k in glob(base)])
+            # only add testids that are on disk but not in the database
+            testids = testids_disk - testids_df
+
+        print('\nupdating with %i new testids' % len(testids))
+        df_dict, df_dict_sys = self.testids2dict(testids=testids)
+
+        self.get_hdf_stores()
+
+        df = self.xml.dict2df(df_dict)
+        df = self.cleanup(df, i0=len(df))
+        self.store.append('table', df)
+        self.store.close()
+
+        df = self.xml.dict2df(df_dict_sys)
+        df = self.cleanup(df, i0=len(df))
+        self.store_sys.append('table', df)
+        self.store_sys.close()
+
+        gc.collect()
+
+    def testids2dict(self, testids=None):
+        """Load all local test id xml files and convert to pandas.DataFrame
+        dictionaries.
+
+        Parameters
+        ----------
+
+        testids : iterable, default=None
+            Iterable holding of those testid's to be converted to dicts.
+            If None, all testid's stored at xml.res_path are considered.
+
+        Returns
+        -------
+
+        df_dict, df_dict_sys : pandas.DataFrame dictionary
+
+        """
+        df_dict = None
+        df_dict_sys = None
+
+        # consider all testids if None
+        if testids is None:
+            # make a list of all available test id folders
+            base = os.path.join(self.xml.res_path, '*')
+            testids = glob(base)
+
+        regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
+        i = 0
+
+        for fpath in tqdm(testids):
+
+#             if i > 10000:
+#                 break
+
+            testid = os.path.basename(fpath)
+            regex.findall(testid)
+            if len(regex.findall(testid)) != 1:
+                continue
+            fpath = pjoin(self.xml.res_path, testid, 'composite.xml')
+            self.xml.load(fpath)
+            self.xml.testid = testid
+            i += 1
+
+            try:
+#                _df_dict = xml.xml2dict()
+                _df_dict, _df_dict_sys = self.xml.xml2dict_split()
+            except Exception as e:
+                print('')
+                print('conversion to df_dict of {} failed.'.format(testid))
+                print(e)
+                continue
+
+            if df_dict is None:
+                df_dict = {key:[] for key in _df_dict}
+            if df_dict_sys is None:
+                df_dict_sys = {key:[] for key in _df_dict_sys}
+
+            for key, val in _df_dict.items():
+                df_dict[key].extend(val)
+            for key, val in _df_dict_sys.items():
+                df_dict_sys[key].extend(val)
+
+        return df_dict, df_dict_sys
+
+    def cleanup(self, df, i0=0):
+
+        # FIXME: is it safe to ignore array columns when looking for duplicates?
+        # there are probably going to be more duplicates
+        # doesn't work for ndarray columns
+        arraycols = set(['RawString', 'ValueArray'])
+        cols = list(set(df.columns) - arraycols)
+        df.drop_duplicates(inplace=True, subset=cols)
+        # columns that can hold different values but still could refer to the same
+        # test data. So basically all user defined columns should be ignored.
+        # But do not drop the columns, just ignore them for de-duplication
+        cols = list(set(df.columns) - set(self.xml.user_cols) - arraycols)
+        # mark True for values that are NOT duplicates
+        df = df.loc[np.invert(df.duplicated(subset=cols).values)]
+        # split the Processer column in Processor info, frequency and cores
+        if 'Processor' in df.columns:
+            df = split_cpu_info(df)
+
+        # trim all columns
+        for col in df:
+            if df[col].dtype==np.object:
+                df[col] = df[col].str.strip()
+
+        # convert object columns to string, but leave other data types as is
+        # ignore columns with very long strings to avoid out of memory errors
+        # RawString and ValueArray can contain a time series
+        ignore = set(['Value']) | arraycols
+        for col, dtype in df.dtypes.items():
+            if dtype==np.object and col not in ignore:
+                try:
+#                    df[col] = df[col].astype('category')
+                    df[col] = df[col].values.astype(np.str)
+                except Exception as e:
+                    print(col)
+                    raise e
+#        # leave array data in different dataframe
+#        df_arr = df[['testid', 'ValueArray', 'Rawstring']]
+
+        # trim all columns
+        for col in df:
+            if df[col].dtype==np.object:
+                df[col] = df[col].str.strip()
+
+        # create a new unique index
+        df.index = i0 + np.arange(len(df))
+
+        # remove all spaces in column names
+#        new_cols = {k:k.replace(' ', '').replace('-', '') for k in df.columns}
+#        df.rename(columns=new_cols, inplace=True)
+
+        return df
 
 
 def search_openbm(search_string, save_xml=True, use_cache=True):
@@ -666,6 +924,40 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
         xml.load_testid_from_obm(testid, use_cache=False, save_xml=save_xml)
 
     return testids
+
+
+def split_json(df_dict):
+    """
+    """
+    cols = set(['compiler', 'compiler-options', 'compiler-type',
+                'install-footnote', 'max-result', 'min-result'])
+    cols_float = set(['max-result', 'min-result'])
+    for col in cols:
+        df_dict[col] = []
+
+    for val in df_dict['JSON']:
+        # don't even try to decode JSON if it is too short
+        if len(val) < 2:
+            json_dict = {}
+        else:
+            json_dict = json.loads(val)
+
+        # seems the data could have one level of hierarchy less
+        if 'compiler-options' in json_dict:
+            json_dict.update(json_dict.pop('compiler-options'))
+        # add splitted JSON data to current row
+        for col, val in json_dict.items():
+            df_dict[col].append(val)
+        # empty values for missing JSON data at current row
+        for col in cols - set(json_dict.keys()) - cols_float:
+            df_dict[col].append('')
+        for col in cols_float - set(json_dict.keys()):
+            df_dict[col].append(np.nan)
+    df_dict.pop('JSON')
+    df_dict.pop('compiler-options')
+    df_dict.pop('install-footnote')
+
+    return df_dict
 
 
 def split_cpu_info(df):
@@ -817,6 +1109,7 @@ def load_local_testids(df=None):
 
     """
     df_dict = None
+    df_dict_sys = None
     xml = xml2df()
 
     ignore = set([])
@@ -847,7 +1140,8 @@ def load_local_testids(df=None):
         i += 1
 
         try:
-            _df_dict = xml.xml2dict()
+#            _df_dict = xml.xml2dict()
+            _df_dict, _df_dict_sys = xml.xml2dict_split()
         except Exception as e:
             print('')
             print('conversion to df_dict of {} failed.'.format(testid))
@@ -856,9 +1150,13 @@ def load_local_testids(df=None):
 
         if df_dict is None:
             df_dict = {key:[] for key in _df_dict}
+        if df_dict_sys is None:
+            df_dict_sys = {key:[] for key in _df_dict_sys}
 
         for key, val in _df_dict.items():
             df_dict[key].extend(val)
+        for key, val in _df_dict_sys.items():
+            df_dict_sys[key].extend(val)
 
         # Very expensive to append many DataFrames to an ever growing DataFrame
 #        try:
@@ -1008,7 +1306,7 @@ def find_results_with_items_in_field(df, search_items, field,
                                      gr1='ResultIdentifier',
                                      gr2='ResultDescription'):
     """Find the tests that contain results for all search parameters.
-    ResultIdentifier's equal to None are ignore. Requires find_items to be
+    ResultIdentifier's equal to None are ignored. Requires find_items to be
     run first because it relies on the added columns of find_i.
 
     Parameters
@@ -1108,8 +1406,9 @@ def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
 
 
 if __name__ == '__main__':
+    dummy = None
 
-    xml = xml2df()
+#    xml = xml2df()
 
 #    search_string = 'RX 480'
 #    df = search_openbm(search_string, save_xml=False, use_cache=True)
