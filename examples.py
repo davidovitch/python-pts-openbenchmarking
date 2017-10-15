@@ -441,14 +441,123 @@ def database():
 
 
     xml = xml2df()
-    df = pd.read_hdf(pjoin(xml.db_path, 'database.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.db_path, 'database_results.h5'), 'table')
+    df_sys = pd.read_hdf(pjoin(xml.db_path, 'database_systems.h5'), 'table')
 
-    explore_dataset(df, 'ResultIdentifier', 'ResultDescription', 'Processor',
-                    min_cases=10)
+    field = 'Disk'
+    search_items = ['960 evo', '950 evo', 'KC1000', 'RD400']
+    df_sel = find_items_in_field(df_sys, search_items, field)
 
-    sel = df[df['Processor'].str.startswith('Intel Core 2')]
-    for k in sorted(sel['ProcessorName'].unique()): print(k)
+#     field = 'ResultTitle'
+#     search_items = ['flexible io tester']
+#     df_sel = find_items_in_field(df, search_items, field)
 
+    df_sel = pd.merge(df_sel, df, left_on='SystemHash', right_on='SystemHash',
+                      how='left', sort=False)
+    resids = find_results_with_items_in_field(df_sel, search_items, field,
+                                              gr1='ResultTitle')
+
+    for resid, values in resids.items():
+        sel1 = df_sel[df_sel['ResultTitle']==resid]
+        print(resid, sel1['ResultIdentifier'].unique())
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            if len(sel2) > 1:
+                print('    % 3i  %s' % (len(sel2), resdescr))
+
+    # plot some results
+    resid_manual = {'pts/xonotic-1.3.1':['Resolution: 1920 x 1080 - Effects Quality: High'],
+                    'pts/unigine-sanctuary-1.5.2':['Resolution: 1920 x 1080']}
+                #'pts/c-ray-1.1.0':['Total Time'],
+                #'pts/dota2-1.2.1':['Resolution: 1920 x 1080 - Renderer: OpenGL'],
+                #'pts/unigine-heaven-1.6.2':['Resolution: 1920 x 1080 - Mode: Fullscreen'],
+                #'pts/unigine-valley-1.1.4':['Resolution: 1920 x 1080 - Mode: Fullscreen']}
+    for resid, values in resid_manual.items():
+        sel1 = df_sel[df_sel['ResultIdentifier']==resid]
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            if len(sel2) == 0:
+                continue
+            elif len(sel2) > 2:
+                fig, ax = openbm.plot_barh_groups(sel2, 'ProcessorName',
+                                                  'Graphics', label_xval='Value')
+            else:
+                fig, ax = openbm.plot_barh(sel2, 'ProcessorName',
+                                           label_xval='Value')
+            ax.set_title(resid + '\n' + resdescr)
+
+
+def example_db_split_gpu():
+
+    field = 'Graphics'
+    search_items = ['rx 460', 'R7 260X', 'hd 6950', 'hd 7950', 'hd 7790']
+    search_items = ['rx 460', 'R7 260X']
+    search_items = ['rx 460', 'hd 7790', 'hd 7950', 'R7 260X']
+
+    gr1 = 'ResultIdentifier'
+
+    xml = xml2df()
+    #df = pd.read_hdf(pjoin(xml.db_path, 'database_categoricals.h5'), 'table')
+    df = pd.read_hdf(pjoin(xml.db_path, 'database_results.h5'), 'table')
+    df_sys = pd.read_hdf(pjoin(xml.db_path, 'database_systems.h5'), 'table')
+
+    #search_items = ['r7 250']
+    df_sel = find_items_in_field(df_sys, search_items, field)
+    df_sel = pd.merge(df_sel, df, left_on='SystemHash', right_on='SystemHash',
+                      how='left', sort=False)
+    resids = find_results_with_items_in_field(df_sel, search_items, field,
+                                              gr1=gr1)
+
+    for key, values in resids.items():
+        print(key)
+        for value in values:
+            print('    ', value)
+
+    for resid, values in resids.items():
+        sel1 = df_sel[df_sel['ResultIdentifier']==resid]
+        print(resid, sel1['ResultIdentifier'].unique())
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            if len(sel2) > 1:
+                print('    % 3i  %s' % (len(sel2), resdescr))
+
+    resid_manual = {
+        'pts/xonotic-1.3.1':['Resolution: 1920 x 1080 - Effects Quality: High',
+                             'Resolution: 3840 x 2160 - Effects Quality: Ultimate'],
+        'pts/unigine-heaven-1.6.2':['Resolution: 1920 x 1080 - Mode: Fullscreen'],
+        'pts/c-ray-1.1.0':['Total Time'],
+        'pts/gputest-1.3.1':['pts/gputest-1.3.1'],
+        'pts/bioshock-infinite-1.0.1':['Resolution: 1920 x 1080 - Effects Quality: Ultra'],
+        }
+        #'pts/unigine-sanctuary-1.5.2':['Resolution: 1920 x 1080']}
+        #'pts/c-ray-1.1.0':['Total Time'],
+        #'pts/dota2-1.2.1':['Resolution: 1920 x 1080 - Renderer: OpenGL'],
+        #'pts/unigine-heaven-1.6.2':['Resolution: 1920 x 1080 - Mode: Fullscreen'],
+        #'pts/unigine-valley-1.1.4':['Resolution: 1920 x 1080 - Mode: Fullscreen']}
+
+    for resid, values in resid_manual.items():
+        sel1 = df_sel[df_sel['ResultIdentifier']==resid]
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            if len(sel2) == 0:
+                continue
+            elif len(sel2) > 2:
+                fig, ax = plot_barh_groups(sel2, 'ProcessorName', 'Graphics',
+                                           label_xval='Value')
+            else:
+                fig, ax = plot_barh(sel2, 'ProcessorName', label_xval='Value')
+            ax.set_title(resid + '\n' + resdescr)
+
+    # Plot all results
+    for resid, values in resids.items():
+        sel1 = df_sel[df_sel[gr1]==resid]
+        for resdescr in values:
+            sel2 = sel1[sel1['ResultDescription']==resdescr]
+            if len(sel2) <= 1:
+                continue
+            fig, ax = plot_barh_groups(sel2, 'ProcessorName', 'Graphics',
+                                       label_xval='Value')
+            ax.set_title(resid + '\n' + resdescr)
 
 if __name__ == '__main__':
 
