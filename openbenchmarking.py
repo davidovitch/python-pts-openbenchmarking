@@ -24,6 +24,49 @@ import pandas as pd
 from matplotlib import pyplot as plt
 
 
+class DataFrameDict:
+    """Utilities for handling and checking the consistancy of a dictionary
+    in DataFrame format
+    """
+
+    def check_column_length(df_dict):
+        """Make sure all columns have the same number of rows
+        """
+        collens = {}
+        for col, values in df_dict.items():
+            collens[col] = len(values)
+
+        if len(set(collens.values())) > 1:
+            for col, val in collens:
+                print('%6i : %s' % (val, col))
+
+        return collens
+
+    def trim_cell_len(df_dict, maxlens):
+        """Trim maximum length of a certain columns/cells
+        """
+        col0 = list(df_dict.keys())[0]
+        for i in range(len(df_dict[col0])):
+            for col, maxlen in maxlens.items():
+                if isinstance(df_dict[col][i], str):
+                    df_dict[col][i] = df_dict[col][i][:maxlen]
+        return df_dict
+
+    def check_cell_len(df_dict):
+        """List maximum cell length per column
+        """
+        maxcellen, celltype = {}, {}
+        for name, column in df_dict.items():
+            maxcellen[name], celltype[name] = [], []
+            for cell in column:
+                celltype[name].append(str(type(cell)))
+                if isinstance(cell, str):
+                    maxcellen[name].append(len(cell))
+                else:
+                    maxcellen[name].append(0)
+        return maxcellen, celltype
+
+
 class OpenBenchMarking:
 
     # add an optional HTML header when downloading content with urllib
@@ -36,6 +79,9 @@ class OpenBenchMarking:
         self.url_base = 'http://openbenchmarking.org/result/{}&export=xml'
         self.url_search = 'http://openbenchmarking.org/s/{}&show_more'
         self.url_latest = 'http://openbenchmarking.org/results/latest'
+        self.url_test = 'http://openbenchmarking.org/test/pts/{}'
+        self.url_test_search = 'http://openbenchmarking.org/test/pts/{}&search'
+        self.url_test_base = 'http://openbenchmarking.org/tests/pts'
         self.hard_soft_tags = set(['Hardware', 'Software'])
         self.testid = 'unknown'
         self.user_cols = ['User', 'SystemDescription', 'testid', 'Notes',
@@ -80,14 +126,23 @@ class OpenBenchMarking:
         self.root = tree.getroot()
         self.io = io
 
-    def get_profiles(self, search_string):
-        """Return a list of test profile id's
+    def get_profiles(self, url):
+        """Return a list of test profile id's from a given OBM url. URL is
+        parsed with safe.
+
+        Parameters
+        ----------
+
+        url : str
+
+
+        Returns
+        -------
+
+        ids : list
+            List of test profile id's
         """
 
-        if search_string is None:
-            url = self.url_latest
-        else:
-            url = self.url_search.format(search_string)
         url = urllib.parse.quote(url, safe='/:')
         req = urllib.request.Request(url=url, headers=self.header)
         response = urllib.request.urlopen(req)
@@ -96,12 +151,29 @@ class OpenBenchMarking:
         text = data.decode('utf-8') # str; can't be used if data is binary
 
         tree = fromstring(text)
-        # all profiles names are in h4 elements, and nothing else is, nice and
-        # easy but if a title is given, the id is in the parent link
+        # all profiles names are in h4 elements, and nothing else is, nice
+        # and easy but if a title is given, the id is in the parent link
         # url starts with /result/
         ids = [k.getparent().attrib['href'][8:] for k in tree.cssselect('h4')]
 
         return ids
+
+    def get_tests(self):
+        """Return a list with all PTS tests.
+        """
+        url = urllib.parse.quote(self.url_test_base, safe='/:')
+        req = urllib.request.Request(url=url, headers=self.header)
+        response = urllib.request.urlopen(req)
+        data = response.read()      # a bytes object
+        text = data.decode('utf-8') # str; can't be used if data is binary
+        tree = fromstring(text)
+        tests = []
+        for h4 in tree.cssselect('h4'):
+            if len(h4) < 1:
+                continue
+            # link starts with /test/pts/
+            tests.append(h4.getchildren()[0].attrib['href'][10:])
+        return tests
 
     def write_testid_xml(self):
         fpath = pjoin(self.res_path, self.testid)
@@ -299,7 +371,8 @@ class xml2df(OpenBenchMarking):
                   #'JSON':'SystemJSON', 'Description':'GeneratedDescription',
         dict_sys = self._rename_dict_key(dict_sys, rename)
         maxlens = {'Memory' : 100,
-                   'Disk' : 100}
+                   'Disk' : 100,
+                   'GeneratedTitle' : 115}
         dict_sys = self._trim_cell_len(dict_sys, maxlens)
 
         dict_res = self.data_entry2dict() #maxlen=60
@@ -313,7 +386,8 @@ class xml2df(OpenBenchMarking):
                   'min-result':'DataEntryMinResult'}
         dict_res = self._rename_dict_key(dict_res, rename)
         maxlens = {'AppVersion' : 50,
-                   'Scale' : 50}
+                   'Scale' : 50,
+                   'ResultDescription' : 150}
         dict_res = self._trim_cell_len(dict_res, maxlens)
 
         # prepare full length but empty SystemHash column in dict_sys
@@ -691,7 +765,7 @@ class DataBase:
                                      complib='blosc', compression=9)
 
     def build(self):
-        """Build complete database from scratch
+        """Build complete database from scratch, over write existing.
         """
 
         df_dict, df_dict_sys = self.testids2dict()
@@ -701,8 +775,8 @@ class DataBase:
 
         fname = pjoin(self.xml.db_path, 'database_results.h5')
 #        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
-        df.to_hdf(fname, 'table', format='table', complib='blosc',
-                  compression=9)
+        df.to_hdf(fname, 'table', format='table', complib='blosc', mode='w',
+                  compression=9, data_columns=True)
         del df_dict
         del df
         gc.collect()
@@ -711,8 +785,8 @@ class DataBase:
         df = self.cleanup(df)
         fname = pjoin(self.xml.db_path, 'database_systems.h5')
 #        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
-        df.to_hdf(fname, 'table', format='table', complib='blosc',
-                  compression=9)
+        df.to_hdf(fname, 'table', format='table', complib='blosc', mode='w',
+                  compression=9, data_columns=True)
         del df_dict_sys
         del df
         gc.collect()
@@ -738,12 +812,15 @@ class DataBase:
 
         df = self.xml.dict2df(df_dict)
         df = self.cleanup(df, i0=len(df))
-        self.store.append('table', df)
+        # https://stackoverflow.com/a/15499291
+        # use data_columns=True for robustness: process column by column and
+        # raise when a data type is being offended
+        self.store.append('table', df, data_columns=True)
         self.store.close()
 
         df = self.xml.dict2df(df_dict_sys)
         df = self.cleanup(df, i0=len(df))
-        self.store_sys.append('table', df)
+        self.store_sys.append('table', df, data_columns=True)
         self.store_sys.close()
 
         gc.collect()
@@ -798,6 +875,14 @@ class DataBase:
                 print('')
                 print('conversion to df_dict of {} failed.'.format(testid))
                 print(e)
+                continue
+            # make sure we have a consistant df
+            k1 = set([len(val) for key, val in _df_dict.items()])
+            k2 = set([len(val) for key, val in _df_dict_sys.items()])
+            if len(k1) > 1 or len(k2) > 1:
+                check_df_dict(_df_dict)
+                check_df_dict(_df_dict_sys)
+                print('conversion to df_dict of {} failed.'.format(testid))
                 continue
 
             if df_dict is None:
@@ -865,15 +950,23 @@ class DataBase:
         return df
 
 
-def search_openbm(search_string, save_xml=True, use_cache=True):
+def search_openbm(search=None, save_xml=True, use_cache=True, tests=[],
+                  latest=False):
     """
 
     Parameters
     ----------
 
-    search_string : str
-        Search string used on the OpenBenchmarking.org search page. If set to
-        None, the latest test results page is loaded instead.
+    search : str, default=None
+        Search string used on the OpenBenchmarking.org search page. Skipped
+        when None.
+
+    tests : 'ALL' or list of str, default=[]
+        Get result ids from the test and test search pages, should be an
+        existing/valid PTS test name. Use all existing tests when tests=ALL.
+
+    latest : boolean, default=False
+        Set to True to get latest results.
 
     save_xml : boolean, default=False
         If set to True, all test id's XML files are saved in the user's
@@ -889,21 +982,48 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
     # can also be confident we are talking about the same test case.
 
     xml = xml2df()
-    # get a list of test result id's from using the search function on obm.org
-    testids = xml.get_profiles(search_string)
-    nr_testids = len(testids)
-    if nr_testids < 1:
-        print('no tests found for search query: {}'.format(search_string))
-        return None
-    else:
-        print('found {} testids on search page'.format(nr_testids))
+    testids, urls = [], []
 
-    # save list
-    if search_string is None:
-        search_string = 'latest'
-    fname = 'testids_{}.txt'.format(search_string.replace('/', '_slash_'))
-    fpath = pjoin(xml.pts_path, 'openbenchmarking.org-searches', fname)
-    np.savetxt(fpath, np.array(testids, dtype=np.str), fmt='%22s')
+    if latest:
+        urls.append(xml.url_latest)
+    elif isinstance(search, str):
+        urls.append(xml.url_search.format(search))
+
+    test_ = str(tests)
+    if len(tests) > 3:
+        test_ = str(len(tests))
+    if tests == 'ALL':
+        tests = xml.get_tests()
+        test_ = 'ALL'
+    print('including {} tests'.format(len(tests)))
+    for test in tests:
+        urls.append(xml.url_test.format(test))
+        urls.append(xml.url_test_search.format(test))
+
+    # get a list of test result id's from given urls
+    print('start extracting testids from {} urls'.format(len(urls)))
+    for url in tqdm(urls):
+        testids.extend(xml.get_profiles(url))
+    testids = list(set(testids))
+    nr_testids = len(testids)
+    print('search: {}, tests: {}, latest: {}'.format(search, test_, latest))
+    print('found {} testids'.format(nr_testids))
+    if nr_testids < 1:
+        return
+
+    # save all tests ids from a lot of results
+    if len(testids) > 150:
+        fname = 'testids_tmp.txt'
+        fpath = pjoin(xml.pts_path, 'openbenchmarking.org-searches', fname)
+        np.savetxt(fpath, np.array(testids, dtype=np.str), fmt='%22s')
+
+    # save testids when using search or latest
+    if isinstance(search, str) or latest:
+        if search is None:
+            search = 'latest'
+        fname = 'testids_{}.txt'.format(search.replace('/', '_slash_'))
+        fpath = pjoin(xml.pts_path, 'openbenchmarking.org-searches', fname)
+        np.savetxt(fpath, np.array(testids, dtype=np.str), fmt='%22s')
 
     # load the cache list
     xml.make_cache_set()
@@ -914,14 +1034,18 @@ def search_openbm(search_string, save_xml=True, use_cache=True):
         nr_testids = len(testids)
         if nr_testids < 1:
             print('all testids have already been downloaded')
-            return None
+            return
         print('')
         print('start downloading {} test id\'s'.format(nr_testids))
         print('')
 
     for testid in tqdm(testids):
         # download xml file
-        xml.load_testid_from_obm(testid, use_cache=False, save_xml=save_xml)
+        try:
+            xml.load_testid_from_obm(testid, use_cache=False, save_xml=save_xml)
+        except OSError as e:
+            print(f'failed downloading: {testid}')
+            print(e)
 
     return testids
 
@@ -1410,16 +1534,9 @@ if __name__ == '__main__':
 
 #    xml = xml2df()
 
-#    search_string = 'RX 480'
-#    df = search_openbm(search_string, save_xml=False, use_cache=True)
-#    df.to_hdf(pjoin(xml.db_path, 'search_{}.h5'.format(search_string)), 'table')
-#    df.to_excel(pjoin(xml.db_path, 'search_{}.xlsx'.format(search_string)))
-#    df.to_csv(pjoin(xml.db_path, 'search_{}.csv'.format(search_string)))
-
-#    df = search_openbm(None, save_xml=True)
-#    dd = date.today()
-#    today = '{}-{:02}-{:02}'.format(dd.year, dd.month, dd.day)
-#    df.to_hdf(pjoin(xml.db_path, 'latest_{}.h5'.format(today)), 'table')
+#    search = 'RX 480'
+#    testids = search_openbm(search=search, save_xml=False, use_cache=True)
+#    testids = search_openbm(latest=True, save_xml=True)
 
 #    xml = xml2df()
 #    io = pjoin(xml.res_path, "1510217-HA-BPPADOKA880/composite.xml")

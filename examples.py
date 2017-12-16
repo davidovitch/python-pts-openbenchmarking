@@ -288,12 +288,12 @@ def example3_dataframe():
     plot_barh_groups(sel, 'Graphics', 'Processor', label_xval='Value')
 
 
-def example(search_string):
+def example(search):
 
     # load previously donwload data
     xml = xml2df()
 #    df = pd.read_hdf(pjoin(xml.res_path, 'search_rx_470.h5'), 'table')
-    testids = search_openbm(search_string, save_xml=True)
+    testids = search_openbm(search=search, save_xml=True)
 
     # TODO: create method to convert a list of testids into a DataFrame
     # either load locally or from remote
