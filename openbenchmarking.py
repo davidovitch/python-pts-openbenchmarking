@@ -778,12 +778,12 @@ class DataBase:
         self.store_sys = pd.HDFStore(fname, mode='a', format='table',
                                      complib='blosc', compression=9)
 
-    def build(self, test=False):
+    def build(self, debug=False):
         """Build complete database from scratch, over write existing.
         """
 
         df_dict, df_dict_sys = self.testids2dict()
-        if test:
+        if debug:
             DataFrameDict.check_column_length(df_dict)
             DataFrameDict.check_column_length(df_dict_sys)
 
@@ -880,7 +880,7 @@ class DataBase:
 #             if i > 10000:
 #                 break
 
-            testid = os.path.basename(fpath)
+            testid = os.path.basename(fpath)[:-4]
             regex.findall(testid)
             if len(regex.findall(testid)) != 1:
                 continue
