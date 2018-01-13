@@ -8,6 +8,7 @@ Created on Sun Nov 27 13:03:26 2016
 import os
 from os.path import join as pjoin
 from glob import glob
+import shutil
 import re
 import gc
 import hashlib
@@ -37,7 +38,7 @@ class DataFrameDict:
             collens[col] = len(values)
 
         if len(set(collens.values())) > 1:
-            for col, val in collens:
+            for col, val in collens.items():
                 print('%6i : %s' % (val, col))
 
         return collens
@@ -91,8 +92,9 @@ class OpenBenchMarking:
     def make_cache_set(self):
         """Create set of all testids present in the res_path directory.
         """
-        fpath = os.path.join(self.res_path, '*')
-        self.testid_cache = set([os.path.basename(k) for k in glob(fpath)])
+        fpath = os.path.join(self.res_path, '**', '*.xml')
+        self.testid_cache = set(
+            [os.path.basename(k)[:-4] for k in glob(fpath, recursive=True)])
 
     def load_testid_from_obm(self, testid, use_cache=True, save_xml=False):
         """Download a given testid from OpenBenchmarking.org.
@@ -114,7 +116,9 @@ class OpenBenchMarking:
             self.load(self.url_base.format(testid))
             in_cache = False
         else:
-            self.load(pjoin(self.res_path, testid, 'composite.xml'))
+            yy = testid[:2]
+            mm = testid[2:4]
+            self.load(pjoin(self.res_path, yy, mm, testid + '.xml'))
             in_cache = True
 
         if save_xml and not in_cache:
@@ -176,10 +180,14 @@ class OpenBenchMarking:
         return tests
 
     def write_testid_xml(self):
-        fpath = pjoin(self.res_path, self.testid)
+        """Write testid xml file to res_path/yy/mm/testid.xml
+        """
+        yy = self.testid[:2]
+        mm = self.testid[2:4]
+        fpath = pjoin(self.res_path, yy, mm)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
-        fname = pjoin(fpath, 'composite.xml')
+        fname = pjoin(fpath, self.testid + '.xml')
         with open(fname, 'w') as f:
             f.write(etree.tostring(self.root).decode())
 
@@ -848,8 +856,8 @@ class DataBase:
         # consider all testids if None
         if testids is None:
             # make a list of all available test id folders
-            base = os.path.join(self.xml.res_path, '*')
-            testids = glob(base)
+            base = pjoin(self.xml.res_path, '**', '*.xml')
+            testids = glob(base, recursive=True)
 
         regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
         i = 0
@@ -880,8 +888,8 @@ class DataBase:
             k1 = set([len(val) for key, val in _df_dict.items()])
             k2 = set([len(val) for key, val in _df_dict_sys.items()])
             if len(k1) > 1 or len(k2) > 1:
-                check_df_dict(_df_dict)
-                check_df_dict(_df_dict_sys)
+                DataFrameDict.check_column_length(_df_dict)
+                DataFrameDict.check_column_length(_df_dict_sys)
                 print('conversion to df_dict of {} failed.'.format(testid))
                 continue
 
@@ -1036,7 +1044,7 @@ def search_openbm(search=None, save_xml=True, use_cache=True, tests=[],
             print('all testids have already been downloaded')
             return
         print('')
-        print('start downloading {} test id\'s'.format(nr_testids))
+        print('start downloading {} new test id\'s'.format(nr_testids))
         print('')
 
     for testid in tqdm(testids):
@@ -1527,6 +1535,41 @@ def plot_barh_groups(df, label_yval, label_group, label_xval='Value'):
     fig.tight_layout()
 
     return fig, ax
+
+
+def move_to_folders():
+    """migrate results to res_path/yy/mm/testid.xml from
+    res_path/testid/composite.xml
+    """
+
+    obm = OpenBenchMarking()
+
+    res_path = obm.res_path
+    res_path2 = pjoin(obm.pts_path, 'test-results-all-obm-2/')
+    res_path3 = pjoin(obm.pts_path, 'test-results-all-obm-leftover/')
+
+    if not os.path.isdir(res_path3):
+        os.makedirs(res_path3)
+
+    base = os.path.join(res_path, '*')
+    testids = glob(base)
+
+    regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
+
+    for fpath in tqdm(testids):
+
+        testid = os.path.basename(fpath)
+        regex.findall(testid)
+        if len(regex.findall(testid)) != 1:
+            print('regex fail:', testid)
+            shutil.move(fpath, res_path3)
+            continue
+        fpath = pjoin(res_path, testid, 'composite.xml')
+        yy = testid[:2]
+        mm = testid[2:4]
+        if not os.path.isdir(pjoin(res_path2, yy, mm)):
+            os.makedirs(pjoin(res_path2, yy, mm))
+        shutil.copy2(fpath, pjoin(res_path2, yy, mm, testid + '.xml'))
 
 
 if __name__ == '__main__':
