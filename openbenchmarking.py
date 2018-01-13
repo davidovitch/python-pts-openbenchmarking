@@ -116,9 +116,8 @@ class OpenBenchMarking:
             self.load(self.url_base.format(testid))
             in_cache = False
         else:
-            yy = testid[:2]
-            mm = testid[2:4]
-            self.load(pjoin(self.res_path, yy, mm, testid + '.xml'))
+            fname = self.get_testid_fname()
+            self.load(fname)
             in_cache = True
 
         if save_xml and not in_cache:
@@ -162,6 +161,15 @@ class OpenBenchMarking:
 
         return ids
 
+    def get_testid_fname(self, testid=None):
+        """
+        """
+        if testid is None:
+            testid = self.testid
+        yy = testid[:2]
+        mm = testid[2:4]
+        return pjoin(self.res_path, yy, mm, testid + '.xml')
+
     def get_tests(self):
         """Return a list with all PTS tests.
         """
@@ -182,12 +190,10 @@ class OpenBenchMarking:
     def write_testid_xml(self):
         """Write testid xml file to res_path/yy/mm/testid.xml
         """
-        yy = self.testid[:2]
-        mm = self.testid[2:4]
-        fpath = pjoin(self.res_path, yy, mm)
+        fname = self.get_testid_fname()
+        fpath = os.path.dirname(fname)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
-        fname = pjoin(fpath, self.testid + '.xml')
         with open(fname, 'w') as f:
             f.write(etree.tostring(self.root).decode())
 
@@ -202,17 +208,17 @@ class EditXML(OpenBenchMarking):
         """
         self.root = etree.Element('PhoronixTestSuite')
         for test_result in list_test_results:
-            fpath = os.path.join(self.res_path, test_result, 'composite.xml')
-            tree = etree.parse(fpath)
+            fname = self.get_testid_fname(testid=test_result)
+            tree = etree.parse(fname)
             root = tree.getroot()
 
     def write_local(self, test_result=None):
         if test_result is None:
             test_result = self.test_result
-        fpath = os.path.join(self.res_path, test_result)
+        fname = self.get_testid_fname(testid=test_result)
+        fpath = os.path.dirname(fname)
         if not os.path.isdir(fpath):
             os.makedirs(fpath)
-        fname = os.path.join(fpath, 'composite.xml')
         with open(fname, 'w') as f:
             f.write(etree.tostring(self.root).decode())
 
@@ -772,11 +778,18 @@ class DataBase:
         self.store_sys = pd.HDFStore(fname, mode='a', format='table',
                                      complib='blosc', compression=9)
 
-    def build(self):
+    def build(self, test=False):
         """Build complete database from scratch, over write existing.
         """
 
         df_dict, df_dict_sys = self.testids2dict()
+        if test:
+            DataFrameDict.check_column_length(df_dict)
+            DataFrameDict.check_column_length(df_dict_sys)
+
+            maxcellen1, celltype1 = DataFrameDict.check_cell_len(df_dict)
+            maxcellen2, celltype2 = DataFrameDict.check_cell_len(df_dict_sys)
+            return
 
         df = self.xml.dict2df(df_dict)
         df = self.cleanup(df)
@@ -871,7 +884,6 @@ class DataBase:
             regex.findall(testid)
             if len(regex.findall(testid)) != 1:
                 continue
-            fpath = pjoin(self.xml.res_path, testid, 'composite.xml')
             self.xml.load(fpath)
             self.xml.testid = testid
             i += 1
