@@ -113,17 +113,17 @@ class OpenBenchMarking:
             self.make_cache_set()
 
         if testid not in self.testid_cache:
-            self.load(self.url_base.format(testid))
+            self.load_testid(self.url_base.format(testid))
             in_cache = False
         else:
             fname = self.get_testid_fname()
-            self.load(fname)
+            self.load_testid(fname)
             in_cache = True
 
         if save_xml and not in_cache:
             self.write_testid_xml()
 
-    def load(self, io):
+    def load_testid(self, io):
 
         tree = etree.parse(io)
         self.root = tree.getroot()
@@ -324,7 +324,7 @@ class xml2df(OpenBenchMarking):
         super().__init__()
 
         if io is not None:
-            self.load(io)
+            self.load_testid(io)
         elif testid is not None:
             self.load_testid_from_obm(testid, use_cache=True)
 
@@ -754,27 +754,26 @@ class xml2df(OpenBenchMarking):
         return dict_res
 
 
-class DataBase:
+class DataBase(xml2df):
 
     def __init__(self):
+        super().__init__()
         self.regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
-        self.db_path = pjoin(os.environ['HOME'], '.phoronix-test-suite')
-        self.xml = xml2df()
 
-    def load(self):
+    def load_db(self):
 
-        fname = pjoin(self.xml.db_path, 'database_results.h5')
+        fname = pjoin(self.db_path, 'database_results.h5')
         df = pd.read_hdf(fname, 'table')
-        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+        fname = pjoin(self.db_path, 'database_systems.h5')
         df_sys = pd.read_hdf(fname, 'table')
 
         return df, df_sys
 
     def get_hdf_stores(self):
-        fname = pjoin(self.xml.db_path, 'database_results.h5')
+        fname = pjoin(self.db_path, 'database_results.h5')
         self.store = pd.HDFStore(fname, mode='a', format='table',
                                  complib='blosc', compression=9)
-        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+        fname = pjoin(self.db_path, 'database_systems.h5')
         self.store_sys = pd.HDFStore(fname, mode='a', format='table',
                                      complib='blosc', compression=9)
 
@@ -791,10 +790,12 @@ class DataBase:
             maxcellen2, celltype2 = DataFrameDict.check_cell_len(df_dict_sys)
             return
 
-        df = self.xml.dict2df(df_dict)
+        print('Convert results from df_dict to df')
+        df = self.dict2df(df_dict)
+        print('df cleanup')
         df = self.cleanup(df)
-
-        fname = pjoin(self.xml.db_path, 'database_results.h5')
+        print('save results to disk')
+        fname = pjoin(self.db_path, 'database_results.h5')
 #        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
         df.to_hdf(fname, 'table', format='table', complib='blosc', mode='w',
                   compression=9, data_columns=True)
@@ -802,9 +803,12 @@ class DataBase:
         del df
         gc.collect()
 
-        df = self.xml.dict2df(df_dict_sys)
+        print('Convert systems from df_dict to df')
+        df = self.dict2df(df_dict_sys)
+        print('df cleanup')
         df = self.cleanup(df)
-        fname = pjoin(self.xml.db_path, 'database_systems.h5')
+        print('save results to disk')
+        fname = pjoin(self.db_path, 'database_systems.h5')
 #        df.drop(['ValueArray', 'RawString'], axis=1, inplace=True)
         df.to_hdf(fname, 'table', format='table', complib='blosc', mode='w',
                   compression=9, data_columns=True)
@@ -815,23 +819,22 @@ class DataBase:
     def update(self, testids=None):
         """Load existing database and add testids that haven't been added.
         """
-        df, df_sys = self.load()
+        df, df_sys = self.load_db()
 
         if testids is None:
             # already included testid's
             testids_df = set(df_sys['testid'].unique())
             # all downloaded testids
-            base = os.path.join(self.xml.res_path, '*')
-            testids_disk = set([os.path.basename(k) for k in glob(base)])
+            self.make_cache_set()
             # only add testids that are on disk but not in the database
-            testids = testids_disk - testids_df
+            testids = self.testid_cache - testids_df
 
         print('\nupdating with %i new testids' % len(testids))
         df_dict, df_dict_sys = self.testids2dict(testids=testids)
 
         self.get_hdf_stores()
 
-        df = self.xml.dict2df(df_dict)
+        df = self.dict2df(df_dict)
         df = self.cleanup(df, i0=len(df))
         # https://stackoverflow.com/a/15499291
         # use data_columns=True for robustness: process column by column and
@@ -839,7 +842,7 @@ class DataBase:
         self.store.append('table', df, data_columns=True)
         self.store.close()
 
-        df = self.xml.dict2df(df_dict_sys)
+        df = self.dict2df(df_dict_sys)
         df = self.cleanup(df, i0=len(df))
         self.store_sys.append('table', df, data_columns=True)
         self.store_sys.close()
@@ -869,28 +872,27 @@ class DataBase:
         # consider all testids if None
         if testids is None:
             # make a list of all available test id folders
-            base = pjoin(self.xml.res_path, '**', '*.xml')
-            testids = glob(base, recursive=True)
+            self.make_cache_set()
+            testids = self.testid_cache
 
         regex = re.compile(r'^[0-9]{7}\-[A-Za-z0-9]*\-[A-Za-z0-9]*$')
         i = 0
 
-        for fpath in tqdm(testids):
+        for testid in tqdm(testids):
 
 #             if i > 10000:
 #                 break
 
-            testid = os.path.basename(fpath)[:-4]
             regex.findall(testid)
             if len(regex.findall(testid)) != 1:
                 continue
-            self.xml.load(fpath)
-            self.xml.testid = testid
+            self.testid = testid
+            self.load_testid(self.get_testid_fname(testid=testid))
             i += 1
 
             try:
-#                _df_dict = xml.xml2dict()
-                _df_dict, _df_dict_sys = self.xml.xml2dict_split()
+#                _df_dict = xml2dict()
+                _df_dict, _df_dict_sys = self.xml2dict_split()
             except Exception as e:
                 print('')
                 print('conversion to df_dict of {} failed.'.format(testid))
@@ -928,7 +930,7 @@ class DataBase:
         # columns that can hold different values but still could refer to the same
         # test data. So basically all user defined columns should be ignored.
         # But do not drop the columns, just ignore them for de-duplication
-        cols = list(set(df.columns) - set(self.xml.user_cols) - arraycols)
+        cols = list(set(df.columns) - set(self.user_cols) - arraycols)
         # mark True for values that are NOT duplicates
         df = df.loc[np.invert(df.duplicated(subset=cols).values)]
         # split the Processer column in Processor info, frequency and cores
