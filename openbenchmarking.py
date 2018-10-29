@@ -13,6 +13,7 @@ import re
 import gc
 import hashlib
 import json
+from io import StringIO
 
 from lxml.html import fromstring
 from lxml import etree
@@ -125,9 +126,27 @@ class OpenBenchMarking:
 
     def load_testid(self, io):
 
-        tree = etree.parse(io)
+        # at some point the XML files suddenly had the following header
+        # <?xml version="1.0"?>, which it didn't like
+        if io[:7] == 'http://':
+#            tree = fromstring(self.get_url(io))
+            tree = etree.parse(StringIO(self.get_url(io)))
+        else:
+            tree = etree.parse(io)
         self.root = tree.getroot()
         self.io = io
+
+    def get_url(self, url):
+
+        url = urllib.parse.quote(url, safe='/:')
+        req = urllib.request.Request(url=url, headers=self.header)
+        response = urllib.request.urlopen(req)
+        data = response.read()      # a bytes object
+        text = data.decode('utf-8') # str; can't be used if data is binary
+        # lxml doesn't like this header
+        text = text.replace('<?xml version="1.0"?>\n', '')
+        text = text.replace('<!--Phoronix Test Suite v8.2.0-->\n', '')
+        return text
 
     def get_profiles(self, url):
         """Return a list of test profile id's from a given OBM url. URL is
@@ -146,14 +165,7 @@ class OpenBenchMarking:
             List of test profile id's
         """
 
-        url = urllib.parse.quote(url, safe='/:')
-        req = urllib.request.Request(url=url, headers=self.header)
-        response = urllib.request.urlopen(req)
-
-        data = response.read()      # a bytes object
-        text = data.decode('utf-8') # str; can't be used if data is binary
-
-        tree = fromstring(text)
+        tree = fromstring(self.get_url(url))
         # all profiles names are in h4 elements, and nothing else is, nice
         # and easy but if a title is given, the id is in the parent link
         # url starts with /result/
@@ -173,12 +185,7 @@ class OpenBenchMarking:
     def get_tests(self):
         """Return a list with all PTS tests.
         """
-        url = urllib.parse.quote(self.url_test_base, safe='/:')
-        req = urllib.request.Request(url=url, headers=self.header)
-        response = urllib.request.urlopen(req)
-        data = response.read()      # a bytes object
-        text = data.decode('utf-8') # str; can't be used if data is binary
-        tree = fromstring(text)
+        tree = fromstring(self.get_url(self.url_test_base))
         tests = []
         for h4 in tree.cssselect('h4'):
             if len(h4) < 1:
@@ -237,9 +244,9 @@ class EditXML(OpenBenchMarking):
 #            for k in hardware_els:
 #                print("'" + k.split(':')[0] + "', ", end='')
 
-            software = el.find('Software')
-            software_els = software.text.split(', ')
-            software_dict = {k.split(':')[0]:k.split(':')[1] for k in software_els}
+#            software = el.find('Software')
+#            software_els = software.text.split(', ')
+#            software_dict = {k.split(':')[0]:k.split(':')[1] for k in software_els}
 #            for k in software_els:
 #                print("'" + k.split(':')[0] + "', ", end='')
 
@@ -386,7 +393,11 @@ class xml2df(OpenBenchMarking):
         dict_sys = self._rename_dict_key(dict_sys, rename)
         maxlens = {'Memory' : 100,
                    'Disk' : 100,
-                   'GeneratedTitle' : 115}
+                   'Graphics' : 96,
+                   'GeneratedTitle' : 115,
+                   'Motherboard' : 75,
+                   'Network' : 93,
+                   'ScreenResolution' : 12}
         dict_sys = self._trim_cell_len(dict_sys, maxlens)
 
         dict_res = self.data_entry2dict() #maxlen=60
@@ -401,7 +412,8 @@ class xml2df(OpenBenchMarking):
         dict_res = self._rename_dict_key(dict_res, rename)
         maxlens = {'AppVersion' : 50,
                    'Scale' : 50,
-                   'ResultDescription' : 150}
+                   'DataEntryIdentifierExtra' : 41,
+                   'ResultDescription' : 149}
         dict_res = self._trim_cell_len(dict_res, maxlens)
 
         # prepare full length but empty SystemHash column in dict_sys
@@ -1048,7 +1060,10 @@ def search_openbm(search=None, save_xml=True, use_cache=True, tests=[],
         np.savetxt(fpath, np.array(testids, dtype=np.str), fmt='%22s')
 
     # load the cache list
-    xml.make_cache_set()
+    if isinstance(use_cache, set):
+        xml.testid_cache = use_cache
+    else:
+        xml.make_cache_set()
 
     # if cache is used, only download new cases
     if use_cache:
