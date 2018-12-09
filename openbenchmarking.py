@@ -16,7 +16,7 @@ import json
 from io import StringIO
 
 from lxml.html import fromstring
-from lxml import etree
+from lxml import (etree, objectify)
 import urllib.request
 
 from tqdm import tqdm
@@ -89,6 +89,7 @@ class OpenBenchMarking:
         self.user_cols = ['User', 'SystemDescription', 'testid', 'Notes',
                           'SystemIdentifier', 'GeneratedTitle', 'LastModified']
         self.testid_cache = None
+        self.parser = etree.XMLParser(remove_comments=True)
 
     def make_cache_set(self):
         """Create set of all testids present in the res_path directory.
@@ -128,11 +129,16 @@ class OpenBenchMarking:
 
         # at some point the XML files suddenly had the following header
         # <?xml version="1.0"?>, which it didn't like
+        # does ignoring comments help?
+        # https://stackoverflow.com/q/18313818/3156685
         if io[:7] == 'http://':
 #            tree = fromstring(self.get_url(io))
-            tree = etree.parse(StringIO(self.get_url(io)))
+#            tree = etree.parse(StringIO(self.get_url(io)))
+            tree = objectify.parse(StringIO(self.get_url(io)),
+                                   parser=self.parser)
         else:
-            tree = etree.parse(io)
+#            tree = etree.parse(io)
+            tree = objectify.parse(io, parser=self.parser)
         self.root = tree.getroot()
         self.io = io
 
@@ -144,8 +150,8 @@ class OpenBenchMarking:
         data = response.read()      # a bytes object
         text = data.decode('utf-8') # str; can't be used if data is binary
         # lxml doesn't like this header
-        text = text.replace('<?xml version="1.0"?>\n', '')
-        text = text.replace('<!--Phoronix Test Suite v8.2.0-->\n', '')
+#        text = text.replace('<?xml version="1.0"?>\n', '')
+#        text = text.replace('<!--Phoronix Test Suite v8.2.0-->\n', '')
         return text
 
     def get_profiles(self, url):
@@ -397,7 +403,7 @@ class xml2df(OpenBenchMarking):
                    'GeneratedTitle' : 115,
                    'Motherboard' : 75,
                    'Network' : 93,
-                   'ScreenResolution' : 12}
+                   'Screen Resolution' : 12}
         dict_sys = self._trim_cell_len(dict_sys, maxlens)
 
         dict_res = self.data_entry2dict() #maxlen=60
@@ -936,7 +942,7 @@ class DataBase(xml2df):
         # FIXME: is it safe to ignore array columns when looking for duplicates?
         # there are probably going to be more duplicates
         # doesn't work for ndarray columns
-        arraycols = set(['RawString', 'ValueArray'])
+        arraycols = set(['RawString', 'ValueArray', 'testruntimes'])
         cols = list(set(df.columns) - arraycols)
         df.drop_duplicates(inplace=True, subset=cols)
         # columns that can hold different values but still could refer to the same
@@ -960,6 +966,7 @@ class DataBase(xml2df):
         ignore = set(['Value']) | arraycols
         for col, dtype in df.dtypes.items():
             if dtype==np.object and col not in ignore:
+                print('cleanup col:', col)
                 try:
 #                    df[col] = df[col].astype('category')
                     df[col] = df[col].values.astype(np.str)
@@ -1088,10 +1095,14 @@ def search_openbm(search=None, save_xml=True, use_cache=True, tests=[],
 
 
 def split_json(df_dict):
+    """Some entries have a JSON data field, but the expected keys have are
+    hard-coded here. This will fail when new keys are found/added to the xml
+    files.
     """
-    """
-    cols = set(['compiler', 'compiler-options', 'compiler-type',
-                'install-footnote', 'max-result', 'min-result'])
+    # The following JSON data types have been found. Manually add more of them
+    # here. Since we have no schema we don't know what to expect in advance.
+    cols = set(['compiler', 'compiler-options', 'compiler-type', 'max-result',
+                'min-result', 'install-footnote', 'test-run-times'])
     cols_float = set(['max-result', 'min-result'])
     for col in cols:
         df_dict[col] = []
@@ -1119,6 +1130,39 @@ def split_json(df_dict):
     df_dict.pop('install-footnote')
 
     return df_dict
+
+
+def split_cpu_str(cpu_str):
+    """
+    """
+
+    p1 = '(?:(\d+) x )?(.*) @ ([0-9]+\.*[0-9]*)(GHz|MHz)'
+    p2 = ' \((?:(?:Total Cores\: (\d+))|(?:(\d+) Cores(?: / (\d+) Threads)?))\)'
+#    p3 = '(?:Total Cores\: (\d+))'
+#    p4 = '(?:(\d+) Cores(?: / (\d+) Threads)?)'
+    expr = p1 + p2
+
+    gg = re.search(expr, cpu_str).groups()
+
+    count = gg[0]
+    if gg[0] is None:
+        count = 1
+
+    descr = gg[1]
+
+    freq_ghz = float(gg[2])
+    if gg[3] == 'MHz':
+        freq_ghz *= 1000
+
+    cores = gg[4]
+    if cores is None:
+        cores = gg[5]
+
+    threads = gg[6]
+    if threads is None:
+        threads = -1
+
+    return int(count), descr, freq_ghz, int(cores), int(threads)
 
 
 def split_cpu_info(df):
